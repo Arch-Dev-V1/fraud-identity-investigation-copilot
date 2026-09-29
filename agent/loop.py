@@ -141,10 +141,17 @@ def memo_to_markdown(memo: dict, case: dict) -> str:
     return "\n".join(lines)
 
 
+_NO_CREDENTIALS = (
+    "No Anthropic credentials found. Set ANTHROPIC_API_KEY in your environment "
+    "(or run `ant auth login`), then start the investigation again."
+)
+
+
 def _client() -> anthropic.Anthropic:
-    if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
-        # An `ant auth login` profile also works, so this is a hint, not a hard stop.
-        pass
+    # Deliberately no credential preflight here: the SDK also resolves an
+    # `ant auth login` profile and federated env vars, so an unset
+    # ANTHROPIC_API_KEY does not mean there is no credential. A genuinely
+    # missing one surfaces as an error event from the loop below.
     return anthropic.Anthropic()
 
 
@@ -180,11 +187,23 @@ def run_investigation(
                 betas=[FALLBACK_BETA],
                 fallbacks="default",
             )
+        except anthropic.AuthenticationError:
+            yield {"type": "error", "message": _NO_CREDENTIALS}
+            return
         except anthropic.APIStatusError as exc:
             yield {"type": "error", "message": f"API error {exc.status_code}: {exc}"}
             return
         except anthropic.APIConnectionError as exc:
             yield {"type": "error", "message": f"Could not reach the API: {exc}"}
+            return
+        except TypeError as exc:
+            # The SDK raises a bare TypeError at request time — not an
+            # AuthenticationError — when it cannot resolve any credential.
+            message = _NO_CREDENTIALS if "authentication method" in str(exc) else f"{exc}"
+            yield {"type": "error", "message": message}
+            return
+        except Exception as exc:  # backstop: the caller always gets an event
+            yield {"type": "error", "message": f"{type(exc).__name__}: {exc}"}
             return
 
         if response.stop_reason == "refusal":
