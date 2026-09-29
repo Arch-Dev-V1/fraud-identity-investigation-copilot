@@ -19,7 +19,7 @@ from typing import Any, Iterator
 
 import anthropic
 
-from . import db, tools
+from . import db, demo, tools
 
 MODEL = "claude-opus-5"
 MAX_TOKENS = 16000
@@ -159,15 +159,23 @@ def run_investigation(
     applicant_id: int,
     client: anthropic.Anthropic | None = None,
     db_path=None,
+    demo_mode: bool | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Investigate one case, yielding events as they happen.
 
     Event types: ``start``, ``thinking``, ``narration``, ``tool_call``,
     ``tool_result``, ``search``, ``memo``, ``error``, ``done``.
+
+    ``demo_mode`` replaces Claude with a canned analyzer so the whole flow runs
+    with no API key and no cost; everything else — tools, database, guardrails —
+    is the real thing. Defaults to the DEMO_MODE environment variable.
     """
-    client = client or _client()
     case = db.get_case(applicant_id, db_path)
-    yield {"type": "start", "case": case}
+    if demo_mode is None:
+        demo_mode = demo.is_demo_mode()
+    if client is None:
+        client = demo.DemoClient(case) if demo_mode else _client()
+    yield {"type": "start", "case": case, "demo_mode": demo_mode}
 
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": build_opening_prompt(case)}
@@ -282,9 +290,12 @@ def run_investigation(
                     "tool": tool_use.name,
                     "input": {"confidence_level": memo.get("confidence_level")},
                     "output": "memo written to audit_log",
+                    "demo_mode": demo_mode,
                     "timestamp": _utcnow(),
                 })
                 markdown = memo_to_markdown(memo, case)
+                if demo_mode:
+                    markdown = f"{demo.DEMO_BANNER}\n\n{markdown}"
                 audit_log_id = db.write_memo(
                     applicant_id=applicant_id,
                     tool_calls_made=json.dumps(trail, indent=2),
@@ -294,6 +305,7 @@ def run_investigation(
                 )
                 yield {
                     "type": "memo",
+                    "demo_mode": demo_mode,
                     "memo": memo,
                     "markdown": markdown,
                     "audit_log_id": audit_log_id,

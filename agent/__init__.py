@@ -5,6 +5,7 @@ database. Note what is not exported: there is no way to set an analyst
 decision from the agent side, and no tool that could.
 """
 
+from .demo import is_demo_mode
 from .db import (
     get_case,
     get_memo,
@@ -18,6 +19,7 @@ __all__ = [
     "MODEL",
     "build_opening_prompt",
     "get_case",
+    "is_demo_mode",
     "get_memo",
     "latest_memo",
     "list_cases",

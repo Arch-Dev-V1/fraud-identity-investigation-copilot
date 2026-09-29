@@ -20,6 +20,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("applicant_id", nargs="?", type=int)
     parser.add_argument("--list", action="store_true", help="list flagged cases and exit")
     parser.add_argument("--json", action="store_true", help="dump raw events as JSON lines")
+    parser.add_argument("--demo", action="store_true",
+                        help="canned analysis — no API key, no cost")
     args = parser.parse_args(argv)
 
     if args.list or args.applicant_id is None:
@@ -29,7 +31,8 @@ def main(argv: list[str] | None = None) -> int:
                   f"{case['name']:<22} {case['reason_codes']}  [{decided}]")
         return 0
 
-    for event in agent.run_investigation(args.applicant_id):
+    demo_mode = True if args.demo else None
+    for event in agent.run_investigation(args.applicant_id, demo_mode=demo_mode):
         if args.json:
             print(json.dumps(event, default=str))
             continue
@@ -37,7 +40,10 @@ def main(argv: list[str] | None = None) -> int:
         if kind == "start":
             case = event["case"]
             print(f"\n=== {case['name']} (applicant {case['id']}) — "
-                  f"{case['abuse_score']}, {case['risk_tier']} risk ===\n")
+                  f"{case['abuse_score']}, {case['risk_tier']} risk ===")
+            if event.get("demo_mode"):
+                print("    [demo mode — canned analysis, no model call]")
+            print()
         elif kind == "thinking":
             print(textwrap.indent(textwrap.fill(event["text"], 88), "  · "))
         elif kind == "narration":

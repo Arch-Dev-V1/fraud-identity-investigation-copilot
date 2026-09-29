@@ -1,4 +1,4 @@
-"""Offline smoke test for the tool-use loop.
+"""Offline smoke test for the tool-use loop and demo mode.
 
 Runs the whole loop against a stubbed Claude client, so it needs no API key and
 costs nothing. It checks the parts that are easy to get wrong: tool results are
@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from agent import loop, record_analyst_decision  # noqa: E402
+from agent import demo, loop, record_analyst_decision  # noqa: E402
 from db import seed  # noqa: E402
 
 
@@ -101,6 +101,42 @@ def build_script():
     ]
 
 
+def check_demo_mode(failures: list[str]) -> None:
+    """Demo mode must run the whole investigation with no client and no network,
+    label the memo as canned, and still write exactly one audit_log row."""
+    tmp = Path(tempfile.mkdtemp()) / "cases.db"
+    seed.build(tmp, seed.SCHEMA_PATH)
+
+    for applicant_id, expected in [(1, "high"), (4, "low"), (6, "low")]:
+        events = list(loop.run_investigation(applicant_id, db_path=tmp, demo_mode=True))
+        memos = [e for e in events if e["type"] == "memo"]
+        if len(memos) != 1:
+            failures.append(f"demo applicant {applicant_id}: expected one memo")
+            continue
+        memo = memos[0]
+        got = memo["memo"]["confidence_level"]
+        if got != expected:
+            failures.append(
+                f"demo applicant {applicant_id}: expected {expected} confidence, got {got}"
+            )
+        if demo.DEMO_BANNER not in memo["markdown"]:
+            failures.append(f"demo applicant {applicant_id}: memo is not labelled as canned")
+        if not memo["memo"]["counter_narrative"].strip():
+            failures.append(f"demo applicant {applicant_id}: empty counter-narrative")
+        if events[-1]["type"] != "done":
+            failures.append(f"demo applicant {applicant_id}: run did not complete")
+
+    conn = sqlite3.connect(tmp)
+    rows = conn.execute(
+        "SELECT applicant_id, analyst_decision FROM audit_log ORDER BY applicant_id"
+    ).fetchall()
+    conn.close()
+    if [r[0] for r in rows] != [1, 4, 6]:
+        failures.append(f"demo mode should write one row per case, got {rows}")
+    if any(r[1] is not None for r in rows):
+        failures.append("demo mode must still leave analyst_decision NULL")
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp()) / "cases.db"
     seed.build(tmp, seed.SCHEMA_PATH)
@@ -159,11 +195,14 @@ def main() -> int:
     check(after["decided_at"] is not None, "decided_at should be stamped")
     conn.close()
 
+    check_demo_mode(failures)
+
     for failure in failures:
         print(f"FAIL: {failure}")
     if failures:
         return 1
-    print(f"ok — {len(events)} events, {len(trail)} tool calls, audit_log clean")
+    print(f"ok — {len(events)} events, {len(trail)} tool calls, audit_log clean; "
+          "demo mode ok on 3 cases")
     return 0
 
 
