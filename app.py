@@ -91,8 +91,30 @@ def render_event(event: dict, container) -> None:
         container.error(event["message"])
 
 
-def run_investigation_ui(applicant_id: int, case: dict) -> None:
-    """Drive the agent loop, streaming each step into st.status."""
+def render_step_replay(events: list[dict]) -> None:
+    """Replay the feed inside an expander. Flat markdown only — Streamlit
+    expanders cannot nest, and render_event uses them."""
+    for event in events:
+        kind = event["type"]
+        if kind == "tool_call":
+            st.markdown(f"**{TOOL_LABEL.get(event['tool'], event['tool'])}** · `{event['tool']}`")
+        elif kind == "search":
+            st.markdown(f"**Web search** · _{event['query']}_")
+        elif kind == "tool_result":
+            mark = "⚠️ " if event.get("is_error") else ""
+            st.caption(f"↳ {mark}{event['tool']} returned {len(event['output'])} chars")
+        elif kind == "narration":
+            st.markdown(f"> {event['text']}")
+        elif kind == "thinking":
+            st.caption(event["text"])
+
+
+def run_investigation_ui(applicant_id: int, case: dict) -> bool:
+    """Drive the agent loop, streaming each step into st.status.
+
+    Returns True if a memo was submitted. On failure it returns False and
+    leaves the error on screen — the caller must not rerun over it.
+    """
     events: list[dict] = []
     record: dict | None = None
 
@@ -122,14 +144,15 @@ def run_investigation_ui(applicant_id: int, case: dict) -> None:
         except Exception as exc:  # keep the UI alive on an unexpected failure
             status.update(label=f"Investigation failed: {exc}", state="error")
             st.exception(exc)
-            return
+            return False
 
         if record is None:
             status.update(label="Investigation ended without a memo", state="error")
-            return
+            return False
         status.update(label=f"Investigation complete — {case['name']}", state="complete")
 
     _state().runs[applicant_id] = record
+    return True
 
 
 def render_memo_panel(applicant_id: int, case: dict) -> None:
@@ -137,8 +160,11 @@ def render_memo_panel(applicant_id: int, case: dict) -> None:
 
     if _state().pending_run == applicant_id:
         _state().pending_run = None
-        run_investigation_ui(applicant_id, case)
-        st.rerun()
+        if run_investigation_ui(applicant_id, case):
+            st.rerun()
+        # Failed: the status box above holds the reason. Rerunning here would
+        # wipe it and leave the analyst staring at an empty panel.
+        return
 
     if record is None:
         st.info(
@@ -151,6 +177,10 @@ def render_memo_panel(applicant_id: int, case: dict) -> None:
         st.caption("Showing the most recent memo on file for this applicant.")
 
     st.markdown(record["markdown"])
+
+    if record.get("events"):
+        with st.expander("Investigation steps", expanded=False):
+            render_step_replay(record["events"])
 
     with st.expander("Tool-call trail (audit_log)", expanded=False):
         st.caption(
