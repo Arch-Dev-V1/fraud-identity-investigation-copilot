@@ -10,11 +10,17 @@ Score, Metro 2 tradeline fields) so the demo holds up under a practitioner's eye
 ## Quickstart
 
 ```bash
+python3 -m venv .venv                   # Python 3.10+
+source .venv/bin/activate               # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+
 export ANTHROPIC_API_KEY=sk-ant-...     # or: ant auth login
 python db/seed.py                       # build db/cases.db (--force to rebuild)
-streamlit run app.py
+streamlit run app.py                    # opens on http://localhost:8501
 ```
+
+The seed step is required — the app has no data until you run it, and `db/cases.db`
+is gitignored, so it never arrives with a clone.
 
 Terminal alternative, same agent loop:
 
