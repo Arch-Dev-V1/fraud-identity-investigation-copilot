@@ -1,2 +1,4 @@
-anthropic>=0.122.0
-streamlit>=1.61.0
+# anthropic 1.x is a different SDK generation from 0.x (httpx2-based); pin to it
+# so a fresh install doesn't land on the old line.
+anthropic>=1.9,<2
+streamlit>=1.61
