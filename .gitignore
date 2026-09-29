@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Synthetic Identity Investigation Copilot
+db/*.db
+.DS_Store
