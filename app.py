@@ -39,8 +39,19 @@ TOOL_LABEL = {
 
 # --- state ------------------------------------------------------------------
 
+def _has_credentials() -> bool:
+    return bool(
+        os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+    )
+
+
 def _state():
     st.session_state.setdefault("selected_case_id", None)
+    # Default to demo mode when there is nothing to bill against, so the app is
+    # never a dead end — but never override an explicit DEMO_MODE=1.
+    st.session_state.setdefault(
+        "demo_mode", agent.is_demo_mode() or not _has_credentials()
+    )
     st.session_state.setdefault("runs", {})       # applicant_id -> run record
     st.session_state.setdefault("pending_run", None)
     return st.session_state
@@ -120,9 +131,16 @@ def run_investigation_ui(applicant_id: int, case: dict) -> bool:
 
     with st.status(f"Investigating {case['name']}…", expanded=True) as status:
         try:
-            for event in agent.run_investigation(applicant_id):
+            for event in agent.run_investigation(
+                applicant_id, demo_mode=_state().demo_mode
+            ):
                 events.append(event)
                 if event["type"] == "start":
+                    if event.get("demo_mode"):
+                        st.markdown(
+                            ":orange[**Demo mode** — canned analysis from real tool "
+                            "results. No model call, no cost.]"
+                        )
                     st.markdown(
                         f"Flagged at **{case['abuse_score']}** "
                         f"({case['risk_tier']} risk) · reason codes "
@@ -270,10 +288,10 @@ def main() -> None:
         st.error(str(exc))
         st.stop()
 
-    if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+    if not state.demo_mode and not _has_credentials():
         st.warning(
-            "No `ANTHROPIC_API_KEY` in the environment. Set one (or run "
-            "`ant auth login`) before starting an investigation.",
+            "Live mode needs credentials: set `ANTHROPIC_API_KEY` (or run "
+            "`ant auth login`), or switch on demo mode in the sidebar.",
             icon="🔑",
         )
 
@@ -291,7 +309,25 @@ def main() -> None:
                 state.selected_case_id = case["id"]
                 st.rerun()
         st.divider()
-        st.caption(f"Model: `{agent.MODEL}`")
+        demo = st.toggle(
+            "Demo mode",
+            value=state.demo_mode,
+            help="Runs the real loop, tools and audit trail against a canned "
+                 "analyzer instead of Claude. No API key, no cost.",
+        )
+        if demo != state.demo_mode:
+            state.demo_mode = demo
+            st.rerun()
+        if demo:
+            st.caption(
+                ":orange[No model call — the memo is assembled from real tool "
+                "results, so the prose is not Claude's.]"
+            )
+        else:
+            st.caption(
+                f"Live · `{agent.MODEL}`"
+                + ("" if _has_credentials() else " · :red[no credentials found]")
+            )
         st.caption(
             "The agent is advisory. It has no approve, reject or escalate tool — "
             "only the buttons on this page can set a disposition."

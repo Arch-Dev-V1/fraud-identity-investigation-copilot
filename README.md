@@ -13,8 +13,6 @@ Score, Metro 2 tradeline fields) so the demo holds up under a practitioner's eye
 python3 -m venv .venv                   # Python 3.10+
 source .venv/bin/activate               # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-
-export ANTHROPIC_API_KEY=sk-ant-...     # or: ant auth login
 python db/seed.py                       # build db/cases.db (--force to rebuild)
 streamlit run app.py                    # opens on http://localhost:8501
 ```
@@ -22,14 +20,40 @@ streamlit run app.py                    # opens on http://localhost:8501
 The seed step is required — the app has no data until you run it, and `db/cases.db`
 is gitignored, so it never arrives with a clone.
 
+No API key needed for that: with no credentials present the app starts in **demo
+mode** and the whole flow works end to end. For live investigations, set a key and
+turn the sidebar toggle off:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...     # or: ant auth login
+```
+
+## Demo mode — the full flow at zero cost
+
+Demo mode replaces exactly one thing: Claude. The real loop runs, the real tools
+query the real database, the real `audit_log` row is written, and every guardrail
+applies — the memo is just assembled by a canned analyzer from the tool results
+instead of being reasoned out by a model. It is labelled as canned in the UI and in
+`audit_log`, so a demo memo can never be mistaken for a real one.
+
+It is on by default whenever no credentials are present, so the app is never a dead
+end. Force it either way with the sidebar toggle, `DEMO_MODE=1`, or
+`investigate.py --demo`. With demo mode off and no key, the app says so and refuses
+to start an investigation rather than failing silently.
+
+What demo mode does **not** cover is the reasoning — which tools the agent chooses
+and what it makes of the results. That needs a key.
+
 Terminal alternative, same agent loop:
 
 ```bash
 python investigate.py --list
-python investigate.py 1
+python investigate.py 6 --demo        # no key, no cost
+python investigate.py 6               # live
 ```
 
-Offline check of the loop, tools and guardrails — no API key, no cost:
+Offline check of the loop, tools, guardrails and demo mode — no API key, no cost.
+Terminal only; it prints a single line and exits:
 
 ```bash
 python -m tests.test_loop

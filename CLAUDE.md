@@ -26,6 +26,7 @@ synthetic-id-copilot/
 ├── agent/
 │   ├── loop.py         # tool-use loop with Claude
 │   ├── tools.py        # tool definitions + implementations
+│   ├── demo.py         # canned analyzer for no-key demo mode
 │   └── db.py           # the only module that opens the SQLite file
 ├── db/
 │   ├── schema.sql
@@ -97,6 +98,19 @@ needs an event per step to drive `st.status`, `web_search` can end a turn with
 `submit_case_memo` has to terminate the loop rather than feed a result back.
 The loop is a generator and never imports Streamlit, so `investigate.py` and the
 tests drive the same code the UI does.
+
+## Demo mode (non-negotiable)
+The app must run end to end with no API key, so that development and testing never
+incur API cost. Demo mode (`agent/demo.py`) replaces only the model: the real loop,
+the real tools, the real database writes and every guardrail still apply, and the
+memo is assembled from actual tool results by a canned analyzer. Demo memos are
+labelled as canned in the UI and in `audit_log` so they cannot be mistaken for real
+ones. It defaults on when no credentials are present; `DEMO_MODE=1`, the sidebar
+toggle and `investigate.py --demo` force it. In live mode a key is required, and its
+absence is reported rather than swallowed.
+
+Any new agent behaviour must be exercisable offline — through demo mode or the
+stubbed client in `tests/test_loop.py` — not only against the live API.
 
 ## Guardrails (non-negotiable)
 - Advisory only — the agent recommends; it never closes, rejects, or escalates a
