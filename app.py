@@ -11,6 +11,7 @@ model access of its own.
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 
@@ -38,6 +39,32 @@ TOOL_LABEL = {
     "check_shared_identifiers": "Looking for identifiers shared with other flagged applications",
     "web_search": "Searching for fraud-pattern context",
 }
+
+
+# Arguments this file passes to agent.run_investigation. Checked at startup
+# because Streamlit re-runs app.py on save but keeps already-imported local
+# modules cached in sys.modules: edit anything under agent/ while the server is
+# running and you get a new app.py calling an old agent, which surfaces as a
+# bare TypeError about an unexpected keyword argument. Naming the real problem
+# is worth the few lines.
+_TURN_ARGUMENTS = ("user_message", "history", "require_memo")
+
+
+def _require_current_agent_module() -> None:
+    parameters = set(inspect.signature(agent.run_investigation).parameters)
+    missing = [name for name in _TURN_ARGUMENTS if name not in parameters]
+    if not missing:
+        return
+    st.error(
+        "**The loaded `agent` module is out of date — restart the app.**\n\n"
+        f"`agent.run_investigation` is missing: `{'`, `'.join(missing)}`.\n\n"
+        "Streamlit re-runs `app.py` when it changes but does not reload local "
+        "modules it has already imported, so edits under `agent/` only take "
+        "effect on a restart. Stop the server with Ctrl+C and start it again "
+        "(`./run.sh`).",
+        icon="♻️",
+    )
+    st.stop()
 
 
 # --- state ------------------------------------------------------------------
@@ -447,6 +474,7 @@ def render_decision_panel(applicant_id: int) -> None:
 # --- page -------------------------------------------------------------------
 
 def main() -> None:
+    _require_current_agent_module()
     state = _state()
 
     try:

@@ -302,6 +302,17 @@ mistype it into someone else's file, and it keeps personal data out of
 └── tests/test_loop.py        # offline: loop, demo mode, MCP transport
 ```
 
+## Restart after editing `agent/`
+
+Streamlit re-runs `app.py` when it changes, but it does not reload local modules
+it has already imported. So an edit under `agent/`, `provider_api/` or
+`mcp_server/` does not reach a running server — you get a new `app.py` calling
+an old `agent`, which shows up as a `TypeError` about an unexpected keyword
+argument. Stop the server and start it again.
+
+`app.py` checks for this on startup and says so plainly rather than letting the
+`TypeError` surface.
+
 ## Verification
 
 ```bash
