@@ -7,8 +7,11 @@ case memo with a counter-narrative, and hands it to a human analyst for approval
 it never disposes a case on its own.
 
 ## Stack
-- Frontend + backend: Python + Streamlit, one app. `st.status` handles live
-  step-by-step updates, so no separate server or SSE plumbing is needed.
+- Frontend: Python + Streamlit. `st.status` handles live step-by-step updates,
+  so no SSE plumbing is needed.
+- Data access is layered: a FastAPI provider gateway stands in for real vendor
+  APIs, an MCP server publishes the lookups as MCP tools, and the agent is an
+  MCP client. See "Layers and transports" below.
 - Reasoning core: Claude API with tool use — the model decides which tools to call
   and when, based on the case in front of it, not a fixed script. Model is
   `claude-opus-5` with adaptive thinking; see `agent/loop.py`.
@@ -23,25 +26,77 @@ synthetic-id-copilot/
 ├── README.md
 ├── app.py              # Streamlit UI: feed, memo, decision buttons
 ├── investigate.py      # the same agent loop, driven from the terminal
+├── run.sh              # starts the gateway, then the app
 ├── agent/
 │   ├── loop.py         # tool-use loop with Claude
-│   ├── tools.py        # tool definitions + implementations
+│   ├── tools.py        # tool definitions, transports, scope guard
+│   ├── mcp_bridge.py   # sync facade over the async MCP client
 │   ├── demo.py         # canned analyzer for no-key demo mode
-│   └── db.py           # the only module that opens the SQLite file
+│   └── db.py           # case feed, memo write, analyst decision
+├── provider_api/
+│   ├── main.py         # FastAPI vendor gateway (HTTP transport)
+│   ├── lookups.py      # lookup logic both transports share
+│   └── metro2.py       # ECOA + payment-history field helpers
+├── mcp_server/
+│   └── server.py       # the four lookups as MCP tools
 ├── db/
 │   ├── schema.sql
 │   └── seed.py         # generates the mock cases
 └── tests/
-    └── test_loop.py    # offline smoke test against a stubbed client
+    └── test_loop.py    # offline: loop, demo mode, MCP transport
 ```
 The UI only talks to the agent module. The agent module is the single point that
 calls Claude, runs tools, and writes to the database.
 
+Import direction is one-way: `agent` may import `provider_api`, never the
+reverse. `provider_api` and `mcp_server` must not import `agent` — that cycle
+has already been introduced once and broken.
+
+## Layers and transports
+```
+UI -> agent -> mcp_server (stdio) -> provider_api (HTTP) -> SQLite
+```
+- `provider_api/` is the mock vendor. Real providers are HTTP services taking
+  identity attributes, so each endpoint returns the attribute-shaped payload it
+  would have sent under a `request` key. Logic lives in `lookups.py`; `main.py`
+  is only transport.
+- `mcp_server/` publishes the four lookups as MCP tools so any MCP client can
+  use them. The tools are thin HTTP clients by design.
+- Two transports: `TOOL_TRANSPORT=mcp` (default) is the path above;
+  `direct` calls `provider_api.lookups` in-process so demo mode and the tests
+  run with nothing started. Both call the SAME lookup functions — a test
+  asserts the payloads are identical, because if the paths built their own SQL
+  the agent would see different evidence depending on its wiring.
+- MCP selected but gateway down falls back to `direct` with a visible note. A
+  fallback must never be silent.
+- `submit_case_memo` is NOT on the MCP surface. It is not a lookup, and putting
+  the memo write on a shared tool surface would let any MCP client write to the
+  audit log.
+- The scope guard lives agent-side in `tools.execute_tool`, before any
+  transport: only the agent knows which case is open, and a generic tool
+  surface must not be trusted to enforce it.
+
 ## Data model
-See db/schema.sql. Two fields worth knowing going in:
-- `tradelines.ecoa_code` is modeled on the real Metro 2 field lenders use to report
-  accounts to credit bureaus — it captures an "authorized user" credit-boost
-  relationship.
+See db/schema.sql. Fields worth knowing going in:
+- `tradelines.ecoa_code` uses the REAL Metro 2 single-character domain: '1'
+  individual, '2' joint contractually liable, '3' authorized user. Never compare
+  characters inline — go through `provider_api/metro2.py`.
+- `tradelines.payment_history_profile` is the real Metro 2 24-character field,
+  one char per month, most recent first ('0' current .. '6' 180+ days, 'B' for
+  months before the account existed). It is what makes a bust-out visible;
+  balances alone cannot show one.
+- `ssn_verification_checks` keeps two distinct real signals apart, and this
+  matters: `ecbsv_match` is all eCBSV actually returns (SSA match on SSN + name
+  + DOB, nothing about issuance), while `ssn_first_observed` is the separate
+  identity-graph signal. SSA randomized number assignment on 2011-06-25, so an
+  issuance era is NOT derivable from a modern number — an earlier version of
+  this schema wrongly implied eCBSV returned one. Every seeded case passes
+  eCBSV; that is the sharper story.
+- `shared_identifiers.first_seen` / `last_seen` carry velocity, and the gateway
+  derives a `span_days` per value. It cuts both ways on purpose: the ring's
+  device and IP span 11 days across three applicants, its address spans 285.
+- `scores.reason_codes` follows SentiLink's structure; the code strings are
+  ours, not their published vocabulary. Keep them obviously ours.
 - `applicants.claimed_email` exists because real scoring providers take email as
   an input alongside name, DOB, SSN, phone, and address.
 - `shared_identifiers.identifier_type` covers `phone`, `address`, `device_id`,
@@ -56,10 +111,10 @@ See db/schema.sql. Two fields worth knowing going in:
 ## Tools the agent can call
 | Tool | Input | Reads | Returns |
 | --- | --- | --- | --- |
-| `check_ssn_issuance` | applicant_id | ssn_issuance_checks | Whether the claimed DOB matches how/when the SSN was issued |
-| `check_credit_trajectory` | applicant_id | tradelines | Account history in date order: open dates, limits, balances, status |
-| `check_authorized_user_history` | applicant_id | tradelines (ecoa_code = authorized_user) | Whether and when the identity was added to someone else's account |
-| `check_shared_identifiers` | applicant_id | shared_identifiers | Phone, address, device, email, or IP values that also appear on other flagged applicants (exact match only) |
+| `check_ssn_verification` | applicant_id | ssn_verification_checks | eCBSV match, and separately when the SSN first appears in header data |
+| `check_credit_trajectory` | applicant_id | tradelines | Accounts in date order with Metro 2 fields and 24-month payment history |
+| `check_authorized_user_history` | applicant_id | tradelines (ecoa_code = '3') | Whether and when the identity was added to someone else's account |
+| `check_shared_identifiers` | applicant_id | shared_identifiers | Matching phone/address/device/email/IP with sighting dates and velocity |
 | `web_search` | query | live web | General fraud-pattern context (e.g. known mail-drop address types) |
 | `submit_case_memo` | timeline, evidence, counter_narrative, confidence_level | writes audit_log | Saves the memo and ends the investigation |
 
@@ -75,8 +130,8 @@ Notes on the tools:
   agent only handles one safe value.
 - A tool should only accept the applicant_id of the case under investigation.
   Enforced in `agent/tools.execute_tool`: any other id returns a tool error.
-- The first four are read-only lookups against SQLite. `web_search` is the only
-  non-mocked tool.
+- The first four are read-only lookups, reached over MCP or in-process.
+  `web_search` is the only non-mocked tool.
 - `submit_case_memo` is the agent's only write. It creates the audit_log row with
   `analyst_decision` left NULL.
 - There is deliberately no approve, reject, or escalate tool. The agent has no way
@@ -132,3 +187,9 @@ to find them.
 ## Explicitly not needed for this POC
 No embeddings, no vector database, no RAG, no live regulated data, no vendor
 benchmarking. Everything runs on fabricated data built for this demo.
+
+Deliberately out of scope in the data, and why: inquiry velocity, email tenure,
+phone line-type, watchlist screening, CMRA / mail-drop flags, and the remaining
+~33 Metro 2 base-segment fields. Each adds a table and possibly a tool for one
+marginal signal; the agent already reasons over four evidence types in visibly
+different orders per case.

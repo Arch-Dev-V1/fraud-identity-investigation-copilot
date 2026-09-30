@@ -26,30 +26,63 @@ CREATE TABLE scores (
     first_party_synthetic_score  INTEGER NOT NULL,       -- 0-999
     third_party_synthetic_score  INTEGER NOT NULL,       -- 0-999
     risk_tier                    TEXT NOT NULL,           -- 'low' | 'medium' | 'high'
-    reason_codes                 TEXT NOT NULL            -- e.g. "SSN_ISSUANCE_MISMATCH,RAPID_TRADELINE_GROWTH"
+    -- The STRUCTURE here is modeled on SentiLink's published score; the code
+    -- strings themselves are ours, not their published vocabulary. Invented
+    -- codes that are obviously ours beat codes that merely look official.
+    reason_codes                 TEXT NOT NULL            -- e.g. "SSN_HEADER_MISMATCH,RAPID_TRADELINE_GROWTH"
 );
 
--- Mock stand-in for a real eCBSV-style check: does the claimed
--- birthdate line up with how/when this SSN was actually issued.
-CREATE TABLE ssn_issuance_checks (
-    applicant_id            INTEGER PRIMARY KEY REFERENCES applicants(id),
-    dob_matches_issuance    INTEGER NOT NULL,   -- 0 or 1
-    issuance_period         TEXT,               -- e.g. "2016-2018"
-    notes                   TEXT
+-- Two DISTINCT real signals about an SSN, deliberately kept apart.
+--
+-- ecbsv_match mirrors what eCBSV (electronic Consent Based SSN Verification)
+-- actually returns: a match / no-match of SSN + name + DOB against SSA
+-- records, nothing more. It does NOT return an issuance date, and earlier
+-- versions of this schema wrongly implied it did.
+--
+-- ssn_first_observed is the separate signal that identity-graph and
+-- credit-header vendors really provide: the earliest date this SSN appears
+-- anywhere in their records. This is what SentiLink-style scoring leans on.
+-- It matters that these are separate: SSA randomized assignment on
+-- 2011-06-25, which destroyed the area/group encoding that once let you infer
+-- an issuance era from the number itself. So for any SSN issued after that,
+-- "when was it issued" is not derivable from the number — but "when did it
+-- first appear in our data" always is.
+--
+-- A fabricated identity typically PASSES ecbsv_match (the number and the
+-- invented name have been reported together for years) while failing on
+-- first-observed: the SSN has no history before the identity was built.
+CREATE TABLE ssn_verification_checks (
+    applicant_id               INTEGER PRIMARY KEY REFERENCES applicants(id),
+    ecbsv_match                INTEGER NOT NULL,   -- 0 or 1: SSA match on SSN+name+DOB
+    ssn_first_observed         TEXT,               -- earliest appearance in header data
+    dob_consistent_with_header INTEGER NOT NULL,   -- 0 or 1
+    notes                      TEXT
 );
 
 -- Credit account history. Field shapes modeled on real Metro 2
 -- base-segment fields. ecoa_code is the field that would capture
 -- an "authorized user" credit-boost relationship in a real report.
+--
+-- ecoa_code uses the real Metro 2 single-character domain, not readable
+-- strings: '1' individual, '2' joint contractually liable, '3' authorized
+-- user. Anything reading this column should go through the display map in
+-- provider_api/metro2.py rather than hardcoding a character.
+--
+-- payment_history_profile is the real Metro 2 field: 24 characters, one per
+-- month, MOST RECENT FIRST. '0' current (0-29 days), '1' 30-59 days past due,
+-- '2' 60-89, '3' 90-119, '4' 120-149, '5' 150-179, '6' 180+, and 'B' for
+-- months before the account existed. It is the richest single field for
+-- bust-out detection, which balances alone cannot show.
 CREATE TABLE tradelines (
-    id                INTEGER PRIMARY KEY,
-    applicant_id      INTEGER NOT NULL REFERENCES applicants(id),
-    account_open_date TEXT NOT NULL,
-    ecoa_code         TEXT NOT NULL,   -- 'individual' | 'joint' | 'authorized_user'
-    creditor          TEXT NOT NULL,
-    credit_limit      INTEGER,
-    balance           INTEGER,
-    status            TEXT             -- 'current' | 'past_due' | 'closed'
+    id                      INTEGER PRIMARY KEY,
+    applicant_id            INTEGER NOT NULL REFERENCES applicants(id),
+    account_open_date       TEXT NOT NULL,
+    ecoa_code               TEXT NOT NULL,   -- '1' | '2' | '3'  (Metro 2 domain)
+    creditor                TEXT NOT NULL,
+    credit_limit            INTEGER,
+    balance                 INTEGER,
+    status                  TEXT,            -- 'current' | 'past_due' | 'closed'
+    payment_history_profile TEXT             -- 24 chars, most recent month first
 );
 
 -- Signals shared across applicants — the "does this phone/address/
@@ -59,12 +92,18 @@ CREATE TABLE tradelines (
 -- ip_address lives here only (not on applicants): it describes where an
 -- application came from, not something the person has.
 -- Matching is exact-match only; near-matches (john1@ vs john2@) are out of scope.
+-- first_seen / last_seen carry velocity, which is why they matter in both
+-- directions: three applications touching one device inside two weeks is far
+-- more damning than three at any time, and sightings fourteen months apart
+-- are genuine evidence FOR a shared building rather than one operator.
 CREATE TABLE shared_identifiers (
     id                  INTEGER PRIMARY KEY,
     applicant_id        INTEGER NOT NULL REFERENCES applicants(id),
     identifier_type     TEXT NOT NULL,   -- 'phone' | 'address' | 'device_id' | 'email' | 'ip_address'
     identifier_value    TEXT NOT NULL,
-    linked_applicant_id INTEGER REFERENCES applicants(id)
+    linked_applicant_id INTEGER REFERENCES applicants(id),
+    first_seen          TEXT,            -- first observation of this value on this application
+    last_seen           TEXT
 );
 
 -- The audit trail. Every investigation writes one row here —

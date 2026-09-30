@@ -6,6 +6,7 @@ decision from the agent side, and no tool that could.
 """
 
 from .demo import is_demo_mode
+from .tools import resolve_transport
 from .db import (
     get_case,
     get_memo,
@@ -24,6 +25,7 @@ __all__ = [
     "latest_memo",
     "list_cases",
     "memo_to_markdown",
+    "resolve_transport",
     "record_analyst_decision",
     "run_investigation",
 ]

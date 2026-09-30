@@ -1,4 +1,4 @@
-"""Offline smoke test for the tool-use loop and demo mode.
+"""Offline smoke test for the tool-use loop, demo mode and the MCP transport.
 
 Runs the whole loop against a stubbed Claude client, so it needs no API key and
 costs nothing. It checks the parts that are easy to get wrong: tool results are
@@ -55,12 +55,12 @@ class StubClient:
 
 MEMO = {
     "timeline": [
-        {"date": "2022-04-11", "event": "Added as authorized user on a $15,000 line.",
+        {"date": "2022-04-11", "event": "Added as authorized user (ECOA 3) on a $15,000 line.",
          "significance": "Instant file age with no repayment history."},
     ],
     "evidence": [
-        {"finding": "SSN issued long after the claimed DOB", "source_tool": "check_ssn_issuance",
-         "detail": "Issuance window 2016-2018 vs claimed DOB 1991-03-14.", "strength": "strong"},
+        {"finding": "SSN has no credit-header presence before 2016-08", "source_tool": "check_ssn_verification",
+         "detail": "First observed 2016-08 vs claimed DOB 1991-03-14.", "strength": "strong"},
     ],
     "counter_narrative": "An adult-issued SSN also fits someone who immigrated as an adult.",
     "confidence_level": "high",
@@ -74,7 +74,7 @@ def build_script():
         Response(
             [
                 Block(type="thinking", thinking="Start with the issuance mismatch."),
-                Block(type="tool_use", id="tu_1", name="check_ssn_issuance",
+                Block(type="tool_use", id="tu_1", name="check_ssn_verification",
                       input={"applicant_id": 1}),
                 Block(type="tool_use", id="tu_2", name="check_credit_trajectory",
                       input={"applicant_id": 2}),  # foreign id — must be refused
@@ -137,6 +137,90 @@ def check_demo_mode(failures: list[str]) -> None:
         failures.append("demo mode must still leave analyst_decision NULL")
 
 
+def check_mcp_transport(failures: list[str]) -> None:
+    """Exercise the real MCP path — agent -> MCP server -> provider gateway ->
+    SQLite — without a subprocess or a socket.
+
+    The MCP server calls the gateway over HTTP, so httpx is swapped for a shim
+    backed by FastAPI's TestClient. Everything else is the production path: the
+    same MCPServer, the same bridge, the same tool conversion.
+    """
+    from fastapi.testclient import TestClient
+
+    from agent import tools
+    from agent.mcp_bridge import McpBridge
+    from provider_api import main as provider_main
+    import mcp_server.server as mcp_srv
+
+    tmp = Path(tempfile.mkdtemp()) / "cases.db"
+    seed.build(tmp, seed.SCHEMA_PATH)
+
+    original_db, original_httpx = provider_main.DB_PATH, mcp_srv.httpx
+    provider_main.DB_PATH = tmp
+    client = TestClient(provider_main.app)
+
+    class _Shim:
+        HTTPError = Exception
+
+        @staticmethod
+        def get(url, timeout=None):
+            # strip the configured base so TestClient sees a bare path
+            return client.get(url.replace(mcp_srv.PROVIDER_API_URL, "") or "/")
+
+    mcp_srv.httpx = _Shim
+    try:
+        with McpBridge(mcp_srv.server) as bridge:
+            names = [t.name for t in bridge.list_tools()]
+            if sorted(names) != sorted(tools.LOOKUP_NAMES):
+                failures.append(f"MCP should publish the four lookups, got {names}")
+
+            definitions = tools.build_tool_list(tools.TRANSPORT_MCP, bridge)
+            if [d.get("name") for d in definitions][-2:] != ["web_search", "submit_case_memo"]:
+                failures.append("web_search and submit_case_memo must stay agent-side")
+            for d in definitions:
+                if d.get("name") in tools.LOOKUP_NAMES:
+                    schema = d["input_schema"]
+                    if schema.get("additionalProperties") is not False:
+                        failures.append(f"{d['name']}: converted schema must be strict")
+
+            payload, is_error = tools.execute_tool(
+                "check_shared_identifiers", {"applicant_id": 1}, 1,
+                transport=tools.TRANSPORT_MCP, bridge=bridge,
+            )
+            if is_error:
+                failures.append(f"MCP lookup failed: {payload[:160]}")
+            else:
+                result = json.loads(payload)["result"]
+                spans = [v["span_days"] for v in result["velocity"]]
+                if not spans or min(spans) != 11:
+                    failures.append(f"velocity should come through MCP, got {spans}")
+
+            # The scope guard must hold on the MCP path too.
+            _, guarded = tools.execute_tool(
+                "check_credit_trajectory", {"applicant_id": 2}, 1,
+                transport=tools.TRANSPORT_MCP, bridge=bridge,
+            )
+            if not guarded:
+                failures.append("scope guard must reject a foreign id over MCP as well")
+
+            # Both transports must agree, or the agent sees different evidence
+            # depending on how it was wired.
+            via_mcp, _ = tools.execute_tool(
+                "check_ssn_verification", {"applicant_id": 6}, 6,
+                transport=tools.TRANSPORT_MCP, bridge=bridge,
+            )
+            via_direct, _ = tools.execute_tool(
+                "check_ssn_verification", {"applicant_id": 6}, 6,
+                db_path=tmp, transport=tools.TRANSPORT_DIRECT,
+            )
+            if json.loads(via_mcp) != json.loads(via_direct):
+                failures.append("the mcp and direct transports returned different payloads")
+    finally:
+        mcp_srv.httpx = original_httpx
+        provider_main.DB_PATH = original_db
+        client.close()
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp()) / "cases.db"
     seed.build(tmp, seed.SCHEMA_PATH)
@@ -155,7 +239,7 @@ def main() -> int:
     check("search" in kinds, "the web_search block should surface as a search event")
 
     results = [e for e in events if e["type"] == "tool_result"]
-    scoped = [e for e in results if e["tool"] == "check_ssn_issuance"]
+    scoped = [e for e in results if e["tool"] == "check_ssn_verification"]
     refused = [e for e in results if e["tool"] == "check_credit_trajectory"]
     check(scoped and not scoped[0]["is_error"], "in-scope lookup should succeed")
     check(refused and refused[0]["is_error"], "out-of-scope applicant_id should be refused")
@@ -185,7 +269,7 @@ def main() -> int:
     check("Counter-narrative" in row["case_memo"], "memo must carry a counter-narrative section")
     trail = json.loads(row["tool_calls_made"])
     check([t["tool"] for t in trail] ==
-          ["check_ssn_issuance", "check_credit_trajectory", "web_search", "submit_case_memo"],
+          ["check_ssn_verification", "check_credit_trajectory", "web_search", "submit_case_memo"],
           f"trail should record every call in order, got {[t['tool'] for t in trail]}")
 
     # Only the analyst path can set a decision.
@@ -196,13 +280,14 @@ def main() -> int:
     conn.close()
 
     check_demo_mode(failures)
+    check_mcp_transport(failures)
 
     for failure in failures:
         print(f"FAIL: {failure}")
     if failures:
         return 1
     print(f"ok — {len(events)} events, {len(trail)} tool calls, audit_log clean; "
-          "demo mode ok on 3 cases")
+          "demo mode ok on 3 cases; mcp transport ok")
     return 0
 
 

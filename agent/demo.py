@@ -18,6 +18,8 @@ import json
 import os
 from typing import Any
 
+from provider_api import metro2
+
 TRUTHY = {"1", "true", "yes", "on"}
 
 DEMO_BANNER = (
@@ -70,33 +72,49 @@ def _money(value: Any) -> str:
 
 def _synthesize_memo(case: dict, results: dict[str, dict]) -> dict:
     """Build a memo from what the tools actually returned for this case."""
-    ssn = results.get("check_ssn_issuance", {}).get("result", {}) or {}
+    ssn = results.get("check_ssn_verification", {}).get("result", {}) or {}
     credit = results.get("check_credit_trajectory", {}).get("result", {}) or {}
     au = results.get("check_authorized_user_history", {}).get("result", {}) or {}
     shared = results.get("check_shared_identifiers", {}).get("result", {}) or {}
 
-    mismatch = ssn.get("dob_matches_issuance") is False
+    header_mismatch = ssn.get("dob_consistent_with_header") is False
+    ecbsv_match = ssn.get("ecbsv_match") is True
+    first_observed = ssn.get("ssn_first_observed")
     issuance_notes = ssn.get("notes") or ""
-    # The seeded notes say so explicitly when adult issuance is unremarkable.
-    benign_issuance = "not by itself" in issuance_notes or "routine" in issuance_notes
+    # The seeded notes say so explicitly when an absent history is unremarkable.
+    benign_history = "not by itself" in issuance_notes or "routine" in issuance_notes
+
     tradelines = credit.get("tradelines") or []
     au_lines = au.get("tradelines") or []
-    matches = shared.get("matches") or []
-    linked_ids = shared.get("distinct_linked_applicants") or []
     util = credit.get("aggregate_utilization_pct")
+    delinquent_accounts = credit.get("accounts_ever_delinquent") or 0
+
+    matches = shared.get("matches") or []
+    velocity = shared.get("velocity") or []
+    linked_ids = shared.get("distinct_linked_applicants") or []
+    # The tightest window in which one value was seen across several
+    # applications. This is the signal that separates a ring from coincidence.
+    tightest = velocity[0] if velocity else None
+    ring_velocity = bool(
+        tightest
+        and tightest["span_days"] <= 30
+        and len(tightest["applicants_touched"]) >= 3
+    )
+
     first_party_led = (
         case["first_party_synthetic_score"] > case["third_party_synthetic_score"]
     )
 
     # --- timeline
     timeline = []
-    if ssn.get("issuance_period"):
+    if first_observed:
         timeline.append({
-            "date": str(ssn["issuance_period"]).split("-")[0],
-            "event": f"SSN issued (window {ssn['issuance_period']}).",
+            "date": str(first_observed),
+            "event": f"SSN first appears in credit-header data ({first_observed}).",
             "significance": (
-                f"Issued long after the claimed DOB of {case['claimed_dob']}."
-                if mismatch
+                f"Nothing before this date, though the claimed DOB of "
+                f"{case['claimed_dob']} implies decades of prior records."
+                if header_mismatch
                 else f"Consistent with the claimed DOB of {case['claimed_dob']}."
             ),
         })
@@ -112,7 +130,7 @@ def _synthesize_memo(case: dict, results: dict[str, dict]) -> dict:
                 "history of its own."
             ),
         })
-    own = [t for t in tradelines if t["ecoa_code"] != "authorized_user"]
+    own = [t for t in tradelines if t.get("ecoa_code") != metro2.ECOA_AUTHORIZED_USER]
     if own:
         timeline.append({
             "date": own[0]["account_open_date"],
@@ -122,6 +140,7 @@ def _synthesize_memo(case: dict, results: dict[str, dict]) -> dict:
     for line in own[-2:]:
         if line is own[0] and len(own) > 1:
             continue
+        history = line.get("payment_history") or {}
         timeline.append({
             "date": line["account_open_date"],
             "event": (
@@ -129,11 +148,23 @@ def _synthesize_memo(case: dict, results: dict[str, dict]) -> dict:
                 f"{_money(line['balance'])} balance, {line['status']}."
             ),
             "significance": (
-                "Near-full utilization on a recently opened line."
-                if line["credit_limit"] and line["balance"]
+                "Near-full utilization on a recently opened line, still paying as "
+                "agreed — the shape credit is in just before a bust-out."
+                if line.get("credit_limit") and line.get("balance")
                 and line["balance"] > 0.85 * line["credit_limit"]
+                and history.get("all_paid_as_agreed")
                 else "Part of the recent growth in exposure."
             ),
+        })
+    if tightest and ring_velocity:
+        timeline.append({
+            "date": tightest["first_seen"],
+            "event": (
+                f"Same {tightest['identifier_type']} ({tightest['identifier_value']}) "
+                f"seen across applicants {tightest['applicants_touched']} within "
+                f"{tightest['span_days']} days."
+            ),
+            "significance": "Shared infrastructure inside a single short window.",
         })
     timeline.sort(key=lambda step: step["date"])
 
@@ -142,13 +173,29 @@ def _synthesize_memo(case: dict, results: dict[str, dict]) -> dict:
     if ssn:
         evidence.append({
             "finding": (
-                "Claimed DOB is inconsistent with SSN issuance"
-                if mismatch
-                else "SSN issuance is consistent with the claimed DOB"
+                "SSA returns a match on SSN, name and DOB"
+                if ecbsv_match
+                else "SSA does not match this SSN, name and DOB"
             ),
-            "source_tool": "check_ssn_issuance",
-            "detail": f"Issuance window {ssn.get('issuance_period')}. {issuance_notes}",
-            "strength": ("moderate" if benign_issuance else "strong") if mismatch else "strong",
+            "source_tool": "check_ssn_verification",
+            "detail": (
+                "eCBSV confirms the combination is on record. Note this is a point "
+                "in the applicant's favour, and also what a well-aged synthetic "
+                "identity looks like — a match alone separates nothing."
+                if ecbsv_match
+                else "No SSA match returned."
+            ),
+            "strength": "moderate",
+        })
+        evidence.append({
+            "finding": (
+                f"SSN has no credit-header presence before {first_observed}"
+                if header_mismatch
+                else f"Credit-header presence back to {first_observed}, consistent with the claimed DOB"
+            ),
+            "source_tool": "check_ssn_verification",
+            "detail": issuance_notes,
+            "strength": ("moderate" if benign_history else "strong") if header_mismatch else "strong",
         })
     if tradelines:
         evidence.append({
@@ -158,13 +205,26 @@ def _synthesize_memo(case: dict, results: dict[str, dict]) -> dict:
             "source_tool": "check_credit_trajectory",
             "detail": (
                 f"Total limit {_money(credit.get('total_credit_limit'))}, total balance "
-                f"{_money(credit.get('total_balance'))}, aggregate utilization {util}%."
+                f"{_money(credit.get('total_balance'))}, aggregate utilization {util}%. "
+                f"{delinquent_accounts} account(s) ever delinquent across the "
+                "24-month payment history."
             ),
             "strength": "strong" if (util or 0) > 80 else "moderate",
         })
+        if (util or 0) > 80 and delinquent_accounts == 0:
+            evidence.append({
+                "finding": "High utilization with a spotless payment history",
+                "source_tool": "check_credit_trajectory",
+                "detail": (
+                    "Every month reports as paid as agreed while balances sit near "
+                    "the limit. Stockpiling before a default looks exactly like "
+                    "this; so does someone using credit heavily and servicing it."
+                ),
+                "strength": "moderate",
+            })
     if au_lines:
         evidence.append({
-            "finding": f"{len(au_lines)} authorized-user tradeline(s), earliest "
+            "finding": f"{len(au_lines)} authorized-user tradeline(s) (ECOA code 3), earliest "
                        f"{au.get('earliest_authorized_user_date')}",
             "source_tool": "check_authorized_user_history",
             "detail": ", ".join(
@@ -172,32 +232,53 @@ def _synthesize_memo(case: dict, results: dict[str, dict]) -> dict:
             ),
             "strength": "moderate",
         })
-    evidence.append({
-        "finding": (
-            f"Shares {len(shared.get('matching_identifier_types') or [])} identifier "
-            f"type(s) with {len(linked_ids)} other flagged applicant(s)"
-            if matches
-            else "No identifier appears on any other flagged application"
-        ),
-        "source_tool": "check_shared_identifiers",
-        "detail": (
-            "; ".join(
+    if matches:
+        evidence.append({
+            "finding": (
+                f"Shares {len(shared.get('matching_identifier_types') or [])} identifier "
+                f"type(s) with {len(linked_ids)} other flagged applicant(s)"
+            ),
+            "source_tool": "check_shared_identifiers",
+            "detail": "; ".join(
+                f"{v['identifier_type']} {v['identifier_value']} across applicants "
+                f"{v['applicants_touched']} over {v['span_days']} days"
+                for v in velocity
+            ) or "; ".join(
                 f"{m['identifier_type']} {m['identifier_value']} → applicant "
-                f"{m['linked_applicant_id']} ({m['linked_applicant_name']}, "
-                f"score {m['linked_abuse_score']})"
-                for m in matches
-            )
-            if matches
-            else shared.get("note", "No matches returned.")
-        ),
-        "strength": "strong" if len(linked_ids) > 1 else ("moderate" if matches else "moderate"),
-    })
+                f"{m['linked_applicant_id']}" for m in matches
+            ),
+            "strength": "strong" if ring_velocity else "moderate",
+        })
+        if ring_velocity:
+            evidence.append({
+                "finding": (
+                    f"Three applications from one {tightest['identifier_type']} inside "
+                    f"{tightest['span_days']} days"
+                ),
+                "source_tool": "check_shared_identifiers",
+                "detail": (
+                    f"{tightest['identifier_value']} seen {tightest['first_seen']} to "
+                    f"{tightest['last_seen']} across applicants "
+                    f"{tightest['applicants_touched']}. Velocity this tight is the "
+                    "hardest single signal here to explain innocently."
+                ),
+                "strength": "strong",
+            })
+    else:
+        evidence.append({
+            "finding": "No identifier appears on any other flagged application",
+            "source_tool": "check_shared_identifiers",
+            "detail": shared.get("note", "No matches returned."),
+            "strength": "moderate",
+        })
 
     # --- confidence
-    if mismatch and matches:
+    if header_mismatch and ring_velocity:
         confidence = "high"
-    elif mismatch:
-        confidence = "low" if benign_issuance else "medium"
+    elif header_mismatch and matches:
+        confidence = "high"
+    elif header_mismatch:
+        confidence = "low" if benign_history else "medium"
     elif matches:
         confidence = "medium"
     else:
@@ -205,56 +286,91 @@ def _synthesize_memo(case: dict, results: dict[str, dict]) -> dict:
 
     # --- counter-narrative
     paragraphs = []
-    if mismatch:
+    if ecbsv_match:
         paragraphs.append(
-            "**On the issuance mismatch.** An SSN issued after the claimed birth "
-            "date is the signature of a fabricated identity, but it is not unique "
-            "to one. It is also what you see for someone who immigrated as an "
-            "adult, someone never enumerated at birth, or a replacement number "
-            "issued after identity theft. "
+            "**On the SSA match.** eCBSV confirms this SSN, name and date of birth "
+            "go together in SSA's records. That is a genuine point for the "
+            "applicant and it is the check most decisioning treats as "
+            "authoritative. It is worth being clear why it is not decisive here: "
+            "a synthetic identity that has been reported to the bureaus for years "
+            "will pass it too. The match rules out a crude fabrication, not a "
+            "patient one."
+        )
+    if header_mismatch:
+        paragraphs.append(
+            "**On the missing credit history.** An SSN with no header presence "
+            "before a recent date fits an identity that was built rather than "
+            "lived. It equally fits someone who immigrated as an adult, someone "
+            "who was never enumerated at birth, and someone who has simply never "
+            "borrowed. Note also what this signal is not: SSA randomized number "
+            "assignment in June 2011, so for a number issued after that nobody "
+            "can infer an issuance date from the number itself — first-observed "
+            "is a statement about our records, not about the person. "
             + (
-                f"The issuance record itself says as much here: \"{issuance_notes}\" "
-                "That is an argument for the applicant, not against them."
-                if benign_issuance
-                else "What would settle it: immigration or work-authorization records, "
-                "or SSA detail on why the number was enumerated when it was."
+                f"The record says as much here: \"{issuance_notes}\" That is an "
+                "argument for the applicant, not against them."
+                if benign_history
+                else "What would settle it: immigration or work-authorization "
+                "records, or any pre-dating non-credit record — a lease, a "
+                "utility account, a tax filing."
             )
         )
     else:
         paragraphs.append(
-            "**On identity.** The issuance check is clean — the SSN was issued in a "
-            "window consistent with the claimed date of birth. Whatever else is "
-            "true of this application, the core identity behaves like a real one, "
-            "and a synthetic-identity disposition would be hard to support."
+            "**On identity.** Header presence runs back far enough to match the "
+            "claimed date of birth, and SSA agrees with the combination. Whatever "
+            "else is true of this application, the core identity behaves like a "
+            "real one, and a synthetic-identity disposition would be hard to "
+            "support."
         )
     if au_lines:
         paragraphs.append(
             "**On the authorized-user line.** Piggybacking is how synthetic "
             "identities are matured, and it is also how a parent puts a teenager "
-            "on a card, or how a spouse shares an account. The mechanism is "
-            "identical; only the relationship differs. What would settle it: the "
-            "host account holder's identity and their relationship to this "
-            "applicant."
+            "on a card or how a spouse shares an account. Metro 2 records ECOA "
+            "code 3 either way — the field captures the mechanism, not the "
+            "relationship. What would settle it: the host account holder's "
+            "identity and their relationship to this applicant."
         )
-    if matches:
+    if matches and ring_velocity:
         paragraphs.append(
-            "**On the shared identifiers.** A shared address can be a genuine "
-            "multi-tenant building or a sublet; a shared IP can be a household, a "
-            "carrier-grade NAT range, or a café. Matching is exact-value only, so "
-            "these say two applications touched the same value — not that one "
-            "person controls both. What would settle it: whether the address is a "
-            "real residential unit, and whether the device match holds up at full "
-            "fingerprint depth rather than a single id."
+            f"**On the shared {tightest['identifier_type']}.** The honest reading "
+            "is that this is the weakest part of the applicant's case. A shared "
+            "address can be a real multi-tenant building and a shared IP can be a "
+            f"household or a carrier NAT range, but {tightest['span_days']} days "
+            f"across {len(tightest['applicants_touched'])} applications is a "
+            "different claim from the same value appearing at some point. What "
+            "would still help them: whether the address is a genuine residential "
+            "unit, and whether the device match holds at full fingerprint depth "
+            "rather than a single id that a shared machine would also produce."
+        )
+    elif matches:
+        paragraphs.append(
+            "**On the shared identifiers.** The matches are spread over "
+            f"{max(v['span_days'] for v in velocity) if velocity else 'many'} days, "
+            "which is much more consistent with a shared building, a recycled "
+            "phone number or a carrier address range than with one operator "
+            "running several applications. Matching is exact-value only, so these "
+            "say two applications touched the same value — not that one person "
+            "controls both."
         )
     else:
         paragraphs.append(
             "**On the absence of links.** Nothing on this application appears on "
             "any other flagged file — no shared phone, address, device, email or "
-            "IP. Fabricated identities are rarely built alone, because the "
-            "infrastructure behind them costs money to keep separate. This is the "
+            "IP. Fabricated identities are rarely built alone, because keeping "
+            "the infrastructure behind them separate costs money. This is the "
             "strongest single point in the applicant's favour."
         )
-    if first_party_led and not mismatch:
+    if delinquent_accounts:
+        paragraphs.append(
+            f"**On the payment history.** {delinquent_accounts} account(s) show a "
+            "delinquency in the 24-month profile. That cuts toward the applicant "
+            "rather than against them: manufactured files are managed, and a "
+            "late payment that was then cured is the kind of ordinary mess real "
+            "people make and rings avoid."
+        )
+    if first_party_led and not header_mismatch:
         paragraphs.append(
             "**On what this more likely is.** The provider's first-party "
             f"sub-score ({case['first_party_synthetic_score']}) sits well above "
@@ -265,31 +381,29 @@ def _synthesize_memo(case: dict, results: dict[str, dict]) -> dict:
             "different handling, and treating this as a synthetic identity would "
             "mean working the wrong case."
         )
-    if (util or 0) > 80:
-        paragraphs.append(
-            f"**On the {util}% utilization.** Near-full balances across recently "
-            "opened lines fit pre-default stockpiling. They also fit someone in "
-            "genuine financial trouble, which is common and is not fraud. What "
-            "would settle it: payment behaviour over the next two cycles."
-        )
 
     # --- summary
-    if first_party_led and not mismatch:
+    if first_party_led and not header_mismatch:
         summary = (
             f"{case['name']} scores {case['abuse_score']} but the evidence points "
-            "away from a fabricated identity: issuance is clean and nothing links "
-            "this file to another flagged application. The recent limit stacking "
-            "and utilization are real concerns — they just point at first-party "
-            "abuse by a real person."
+            "away from a fabricated identity: SSA matches, header history runs "
+            "back decades, and nothing links this file to another flagged "
+            "application. The recent limit stacking is a real concern — it just "
+            "points at first-party abuse by a real person."
         )
     elif confidence == "high":
+        detail = (
+            f"the same {tightest['identifier_type']} across applicants "
+            f"{tightest['applicants_touched']} inside {tightest['span_days']} days"
+            if ring_velocity
+            else f"identifiers shared with {len(linked_ids)} other flagged applicant(s)"
+        )
         summary = (
-            f"{case['name']}'s file shows the full synthetic pattern: an SSN issued "
-            f"{ssn.get('issuance_period')} against a claimed DOB of "
-            f"{case['claimed_dob']}, an authorized-user line providing instant "
-            f"file age, and identifiers shared with {len(linked_ids)} other flagged "
-            "applicant(s). The three together are much harder to explain innocently "
-            "than any one alone."
+            f"{case['name']}'s file shows the full synthetic pattern: an SSN that "
+            f"passes SSA but has no credit history before {first_observed} against "
+            f"a claimed DOB of {case['claimed_dob']}, an authorized-user line "
+            f"supplying instant file age, and {detail}. The combination is much "
+            "harder to explain innocently than any one signal alone."
         )
     elif confidence == "low":
         summary = (
@@ -357,10 +471,11 @@ class _DemoMessages:
                 [
                     _thinking(
                         f"Reason codes are {self.case['reason_codes']}. Start with "
-                        "issuance, since a mismatch reframes everything else, and "
-                        "pull the trajectory alongside it."
+                        "SSN verification, since an SSA match with no credit "
+                        "history behind it reframes everything else, and pull the "
+                        "trajectory alongside it for the payment profiles."
                     ),
-                    _tool_use("demo_1", "check_ssn_issuance", {"applicant_id": applicant_id}),
+                    _tool_use("demo_1", "check_ssn_verification", {"applicant_id": applicant_id}),
                     _tool_use("demo_2", "check_credit_trajectory", {"applicant_id": applicant_id}),
                 ],
                 "tool_use",
@@ -373,7 +488,8 @@ class _DemoMessages:
                         "Now the two questions that separate a manufactured file "
                         "from a thin but real one: where the file age came from, "
                         "and whether anything here appears on another flagged "
-                        "application."
+                        "application — with the velocity, not just the fact of a "
+                        "match."
                     ),
                     _tool_use("demo_3", "check_authorized_user_history", {"applicant_id": applicant_id}),
                     _tool_use("demo_4", "check_shared_identifiers", {"applicant_id": applicant_id}),

@@ -4,8 +4,9 @@ An AI agent that investigates flagged synthetic-identity fraud cases, reconstruc
 identity was matured, and writes an evidence-linked case memo with a counter-narrative — then
 hands it to a human analyst. It never disposes of a case on its own.
 
-All data is fabricated. Field shapes are modeled on real published formats (SentiLink's Synthetic
-Score, Metro 2 tradeline fields) so the demo holds up under a practitioner's eye.
+All data is fabricated. Field shapes follow real published formats (SentiLink's Synthetic Score,
+Metro 2 base-segment fields, eCBSV's actual response) so the demo holds up under a
+practitioner's eye.
 
 ## Quickstart
 
@@ -14,50 +15,113 @@ python3 -m venv .venv                   # Python 3.10+
 source .venv/bin/activate               # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python db/seed.py                       # build db/cases.db (--force to rebuild)
-streamlit run app.py                    # opens on http://localhost:8501
+./run.sh                                # gateway + app, on http://localhost:8501
 ```
 
-The seed step is required — the app has no data until you run it, and `db/cases.db`
-is gitignored, so it never arrives with a clone.
+`run.sh` starts the provider gateway and then Streamlit. The MCP server is not in that list
+because the agent launches it itself over stdio. To run the pieces by hand:
 
-No API key needed for that: with no credentials present the app starts in **demo
-mode** and the whole flow works end to end. For live investigations, set a key and
-turn the sidebar toggle off:
+```bash
+python -m uvicorn provider_api.main:app --port 8000     # provider gateway
+streamlit run app.py                                    # the app
+```
+
+**No API key needed.** With no credentials present the app starts in demo mode and the whole
+flow works end to end. For live investigations:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...     # or: ant auth login
 ```
 
+## Architecture
+
+```
+                    ┌──────────────────────────────────────────┐
+   Streamlit UI ──▶ │ agent/  loop · tools · demo · db         │
+                    └───────────────┬──────────────────────────┘
+                                    │  tool_use  (scope guard here)
+                                    ▼
+                    ┌──────────────────────────────────────────┐
+                    │ mcp_server/   MCP tool surface (stdio)   │
+                    └───────────────┬──────────────────────────┘
+                                    │  HTTP
+                                    ▼
+                    ┌──────────────────────────────────────────┐
+                    │ provider_api/  mock vendor gateway       │
+                    │                lookups · metro2          │
+                    └───────────────┬──────────────────────────┘
+                                    ▼
+                                 SQLite
+```
+
+Each layer has a distinct job rather than being a pass-through:
+
+- **`provider_api/`** stands in for the vendor APIs a lender actually integrates. SentiLink,
+  Socure and LexisNexis are all HTTP services that take identity *attributes*, so every endpoint
+  returns the attribute-shaped payload it would have sent under a `request` key — the provider
+  contract stays visible instead of implied. `provider_api/lookups.py` holds the logic;
+  `main.py` is only transport.
+- **`mcp_server/`** publishes the four lookups as MCP tools, so anything that speaks MCP can use
+  them — this app's agent, Claude Desktop, another team's agent. The tools are deliberately thin:
+  they call the gateway and return JSON.
+- **`agent/`** owns the tool-use loop, the memo, and the guardrail.
+
+**Two transports.** `TOOL_TRANSPORT=mcp` (default) is the path above. `TOOL_TRANSPORT=direct`
+calls `provider_api.lookups` in-process, which is how demo mode and the tests run with nothing
+else started. Both transports call the *same* lookup functions, so their responses are identical
+by construction — a test asserts this, because if the two paths built their own SQL the agent
+would see different evidence depending on how it was wired. If MCP is selected but the gateway
+isn't reachable, the agent falls back to direct and says so in the UI rather than silently.
+
+**What is not on the MCP surface:** `submit_case_memo`, and anything that could decide a case.
+The memo write is not a lookup, and exposing it on a shared tool surface would let any MCP client
+write to the audit log. It stays in-process next to the guardrail it depends on.
+
+**Where the scope guard lives:** agent-side, in `agent/tools.execute_tool`, before any transport.
+Only the agent knows which case is open, and the MCP server is a generic surface that must not be
+trusted to enforce it. A test checks the guard holds over MCP as well as in-process.
+
+## Using the MCP server from other clients
+
+It also serves over HTTP:
+
+```bash
+python -m mcp_server --transport streamable-http
+```
+
+Or over stdio, which is what an MCP client config looks like:
+
+```json
+{
+  "mcpServers": {
+    "synthetic-identity-lookups": {
+      "command": "/path/to/.venv/bin/python",
+      "args": ["-m", "mcp_server"],
+      "env": { "PROVIDER_API_URL": "http://127.0.0.1:8000" }
+    }
+  }
+}
+```
+
+The gateway must be running either way — the MCP tools are HTTP clients.
+
 ## Demo mode — the full flow at zero cost
 
-Demo mode replaces exactly one thing: Claude. The real loop runs, the real tools
-query the real database, the real `audit_log` row is written, and every guardrail
-applies — the memo is just assembled by a canned analyzer from the tool results
-instead of being reasoned out by a model. It is labelled as canned in the UI and in
-`audit_log`, so a demo memo can never be mistaken for a real one.
+Demo mode replaces exactly one thing: Claude. The real loop runs, the real tools resolve over the
+real transport, the real `audit_log` row is written, and every guardrail applies — the memo is
+assembled by a canned analyzer from actual tool results instead of being reasoned out by a model.
+It is labelled as canned in the UI and in `audit_log`, so a demo memo can never be mistaken for a
+real one.
 
-It is on by default whenever no credentials are present, so the app is never a dead
-end. Force it either way with the sidebar toggle, `DEMO_MODE=1`, or
-`investigate.py --demo`. With demo mode off and no key, the app says so and refuses
-to start an investigation rather than failing silently.
+It is on by default whenever no credentials are present, so the app is never a dead end. Force it
+with the sidebar toggle, `DEMO_MODE=1`, or `investigate.py --demo`. With demo mode off and no key,
+the app says so and refuses to start rather than failing silently.
 
-What demo mode does **not** cover is the reasoning — which tools the agent chooses
-and what it makes of the results. That needs a key.
+Demo mode and transport are independent: demo mode works over MCP when the gateway is up, and
+falls back to direct when it isn't.
 
-Terminal alternative, same agent loop:
-
-```bash
-python investigate.py --list
-python investigate.py 6 --demo        # no key, no cost
-python investigate.py 6               # live
-```
-
-Offline check of the loop, tools, guardrails and demo mode — no API key, no cost.
-Terminal only; it prints a single line and exits:
-
-```bash
-python -m tests.test_loop
-```
+What demo mode does **not** cover is the reasoning — which tools the agent chooses and what it
+makes of the results. That needs a key.
 
 ## The guardrail
 
@@ -68,77 +132,117 @@ code path that can set that column is `agent.record_analyst_decision`, reached o
 buttons in the UI.
 
 Every memo carries a confidence level rather than a verdict, and a counter-narrative arguing that
-the applicant is a real person — because the signals that identify synthetics have innocent
-versions. An SSN issued after the claimed birth date fits a fabricated identity; it also fits
-someone who immigrated as an adult. An authorized-user tradeline is how synthetics are matured;
-it is also how a parent helps a teenager build credit.
+the applicant is a real person — because the signals that identify synthetics all have innocent
+versions.
 
 ## The cases
 
-Six fabricated applicants, built so the agent has something real to reason about:
-
 | # | Applicant | Score | What it is |
 | --- | --- | --- | --- |
-| 1 | Marcus Delane Hoyt | 918 | Textbook matured synthetic; the anchor of a three-identity ring |
+| 1 | Marcus Delane Hoyt | 918 | Matured synthetic; anchor of a three-identity ring |
 | 2 | Tressa Lindqvist | 874 | Same ring — shares an address, device and IP with #1 |
-| 3 | Devon Aguayo-Pratt | 841 | Same ring — shares a phone with #1, already slipping past due |
+| 3 | Devon Aguayo-Pratt | 841 | Same ring — shares a phone with #1, already past due |
 | 5 | Oscar Bellweather | 766 | Real person, first-party bust-out: 20 clean years, then a stacking spree |
-| 6 | Nadia Osei-Kwame | 538 | Real person who immigrated as an adult — the SSN mismatch is innocent |
-| 4 | Priya Raghunathan | 402 | Real 22-year-old with a thin file and a parent's AU line |
+| 6 | Nadia Osei-Kwame | 538 | Real person who immigrated as an adult — the missing history is innocent |
+| 4 | Priya Raghunathan | 402 | Real 22-year-old, thin file, parent's authorized-user line |
 
 4 and 6 are the ones worth watching: they score badly for legitimate reasons, so the
-counter-narrative has to do actual work.
+counter-narrative has to do real work. 5 is the one where the right answer is *low* confidence
+that the identity is synthetic while the abuse risk is still real.
 
-## How it works
+## Data fidelity — what is real and what is ours
 
-1. The agent is given the flagged case, its score, and its reason codes.
-2. It chooses tools based on what is suspicious about *this* case — not a fixed checklist. A case
-   flagged for first-party abuse gets a different investigation from one flagged for a shared device.
-3. After each result it decides whether it has enough or needs more.
-4. Before submitting it self-checks: is every claim tied to a tool result, and is the
-   counter-narrative substantive?
-5. It calls `submit_case_memo` — timeline, evidence, counter-narrative, confidence level.
+Worth being explicit, since the point of the field shapes is that they survive scrutiny:
 
-### Tools
+**Modeled on real formats.**
+- `tradelines.ecoa_code` uses the real Metro 2 single-character domain: `1` individual, `2` joint
+  contractually liable, `3` authorized user. Read it through `provider_api/metro2.py`, never by
+  comparing characters.
+- `tradelines.payment_history_profile` is the real Metro 2 field: 24 characters, one per month,
+  most recent first, `0` current through `6` for 180+ days, `B` for months before the account
+  existed. It is the richest single field for bust-out detection, which balances alone cannot show.
+- `ssn_verification_checks` keeps two genuinely distinct signals apart. `ecbsv_match` is what
+  eCBSV actually returns — a match of SSN + name + DOB against SSA records, and *nothing about
+  issuance*. `ssn_first_observed` is the separate identity-graph signal: the earliest date the SSN
+  appears in credit-header data. This distinction matters because SSA randomized number assignment
+  on 2011-06-25, destroying the area/group encoding that once let you infer an issuance era from
+  the number itself. All five ring and false-positive cases *pass* eCBSV, which is the sharper
+  story: a match rules out a crude fabrication, not a patient one.
+- `shared_identifiers.first_seen` / `last_seen` give velocity. The gateway computes a `span_days`
+  per identifier value, which cuts both ways — the ring's device and IP appear across three
+  applications inside 11 days, while its shared address spans 285 days and is argued as the weaker
+  signal it is.
+- `scores` mirrors SentiLink's published Synthetic Score shape: 0-999, first-party / third-party /
+  composite, risk tier, reason codes.
+
+**Ours, not theirs.** The reason-code strings (`SSN_HEADER_MISMATCH`, …) are invented. The
+structure follows SentiLink's; the vocabulary does not. Codes that are obviously ours beat codes
+that merely look official.
+
+**Still absent.** Inquiry velocity, email tenure, phone line-type, watchlist screening, CMRA /
+mail-drop flags, and the remaining ~33 Metro 2 base-segment fields. Each would add a table and a
+tool for one marginal signal; the agent already reasons over four evidence types in visibly
+different orders per case.
+
+## Tools
 
 | Tool | Reads | Returns |
 | --- | --- | --- |
-| `check_ssn_issuance` | `ssn_issuance_checks` | Whether the claimed DOB matches how/when the SSN was issued |
-| `check_credit_trajectory` | `tradelines` | Account history in date order, with utilization |
-| `check_authorized_user_history` | `tradelines` (`ecoa_code = authorized_user`) | Whether and when the identity was added to someone else's account |
-| `check_shared_identifiers` | `shared_identifiers` | Phone/address/device/email/IP values also on other flagged applicants |
+| `check_ssn_verification` | `ssn_verification_checks` | eCBSV match, and separately when the SSN first appears in header data |
+| `check_credit_trajectory` | `tradelines` | Accounts in date order with Metro 2 fields and 24-month payment history |
+| `check_authorized_user_history` | `tradelines` (ECOA `3`) | Whether and when the identity was added to someone else's account |
+| `check_shared_identifiers` | `shared_identifiers` | Matching phone/address/device/email/IP with sighting dates and velocity |
 | `web_search` | live web | Fraud-pattern context (the only non-mocked tool) |
 | `submit_case_memo` | writes `audit_log` | Saves the memo, ends the investigation |
 
-Every SQLite tool takes only `applicant_id`, and only the id of the case under investigation —
-anything else comes back as a tool error. An id is unambiguous where names and DOBs collide, the
-model cannot mistype it into someone else's file, and it keeps personal data out of
-`audit_log.tool_calls_made`. Inside each tool the code reads name, DOB and SSN from `applicants`
-and builds a provider-shaped request itself, which is what a real provider call looks like.
+Every lookup takes only `applicant_id`, and only the id of the case under investigation — anything
+else returns a tool error. An id is unambiguous where names and DOBs collide, the model cannot
+mistype it into someone else's file, and it keeps personal data out of
+`audit_log.tool_calls_made`.
 
 ## Layout
 
 ```
-├── app.py              # Streamlit UI: feed, memo, decision buttons
-├── investigate.py      # same loop, from the terminal
+├── app.py                    # Streamlit UI: feed, memo, decision buttons
+├── investigate.py            # same loop, from the terminal
+├── run.sh                    # gateway + app
 ├── agent/
-│   ├── loop.py         # tool-use loop with Claude
-│   ├── tools.py        # tool definitions + implementations
-│   └── db.py           # the only module that touches SQLite
+│   ├── loop.py               # tool-use loop with Claude
+│   ├── tools.py              # tool definitions, transports, scope guard
+│   ├── mcp_bridge.py         # sync facade over the async MCP client
+│   ├── demo.py               # canned analyzer for no-key demo mode
+│   └── db.py                 # case feed, memo write, analyst decision
+├── provider_api/
+│   ├── main.py               # FastAPI vendor gateway
+│   ├── lookups.py            # the lookup logic both transports share
+│   └── metro2.py             # ECOA + payment-history field helpers
+├── mcp_server/
+│   └── server.py             # the four lookups as MCP tools
 ├── db/
 │   ├── schema.sql
-│   └── seed.py         # generates the mock cases
-└── tests/test_loop.py  # offline smoke test, stubbed client
+│   └── seed.py               # generates the mock cases
+└── tests/test_loop.py        # offline: loop, demo mode, MCP transport
 ```
 
-The UI only imports `agent`. That package is the single point that calls Claude, runs tools, and
-writes to the database.
+## Verification
+
+```bash
+python -m tests.test_loop     # no API key, no cost, no network
+```
+
+Covers the loop against a stubbed client (tool results returned under the right `tool_use_id`,
+`pause_turn` resumed, scope guard, one `audit_log` row with `analyst_decision` NULL), demo mode on
+three cases, and the MCP transport in-process — including that both transports return byte-identical
+payloads.
 
 ## Stack notes
 
-- **Model:** `claude-opus-5` with adaptive thinking. Server-side refusal fallbacks are enabled;
-  drop `betas` / `fallbacks` in `agent/loop.py` to turn that off.
+- **Model:** `claude-opus-5` with adaptive thinking. Server-side refusal fallbacks are on; drop
+  `betas` / `fallbacks` in `agent/loop.py` to disable.
 - **Manual tool-use loop**, not the SDK's tool runner: the UI needs an event per step to drive
   `st.status`, `web_search` can end a turn with `pause_turn` (which the Python runner does not
   auto-resume), and `submit_case_memo` has to terminate the loop rather than feed a result back.
+- **`agent/mcp_bridge.py`** runs the async MCP client on one long-lived coroutine in a background
+  thread. Entering an MCP session in one task and calling it from another raises anyio
+  cancel-scope errors, so enter, call and exit all happen in a single task serviced by a queue.
 - **No embeddings, no vector database, no RAG.** Every lookup is structured and exact-match.

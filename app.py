@@ -29,10 +29,10 @@ DECISION_LABEL = {
     "escalated": "Escalated for more evidence",
 }
 TOOL_LABEL = {
-    "check_ssn_issuance": "Checking SSN issuance against claimed DOB",
-    "check_credit_trajectory": "Pulling credit trajectory",
+    "check_ssn_verification": "Verifying SSN against SSA and credit-header history",
     "check_authorized_user_history": "Checking authorized-user history",
     "check_shared_identifiers": "Looking for identifiers shared with other flagged applications",
+    "check_credit_trajectory": "Pulling credit trajectory and payment history",
     "web_search": "Searching for fraud-pattern context",
 }
 
@@ -136,6 +136,14 @@ def run_investigation_ui(applicant_id: int, case: dict) -> bool:
             ):
                 events.append(event)
                 if event["type"] == "start":
+                    st.caption(
+                        f"Tool transport: `{event.get('transport', '?')}`"
+                        + ("  ·  MCP server → provider gateway → SQLite"
+                           if event.get("transport") == "mcp"
+                           else "  ·  in-process lookups")
+                    )
+                    if event.get("transport_note"):
+                        st.warning(event["transport_note"], icon="🔌")
                     if event.get("demo_mode"):
                         st.markdown(
                             ":orange[**Demo mode** — canned analysis from real tool "
@@ -318,6 +326,11 @@ def main() -> None:
         if demo != state.demo_mode:
             state.demo_mode = demo
             st.rerun()
+        transport, transport_note = agent.resolve_transport()
+        st.caption(
+            f"Transport: `{transport}`"
+            + ("" if transport == "mcp" else " · gateway not running")
+        )
         if demo:
             st.caption(
                 ":orange[No model call — the memo is assembled from real tool "

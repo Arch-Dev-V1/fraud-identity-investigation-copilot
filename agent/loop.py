@@ -20,6 +20,7 @@ from typing import Any, Iterator
 import anthropic
 
 from . import db, demo, tools
+from .mcp_bridge import McpUnavailable
 
 MODEL = "claude-opus-5"
 MAX_TOKENS = 16000
@@ -160,6 +161,7 @@ def run_investigation(
     client: anthropic.Anthropic | None = None,
     db_path=None,
     demo_mode: bool | None = None,
+    transport: str | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Investigate one case, yielding events as they happen.
 
@@ -169,13 +171,63 @@ def run_investigation(
     ``demo_mode`` replaces Claude with a canned analyzer so the whole flow runs
     with no API key and no cost; everything else — tools, database, guardrails —
     is the real thing. Defaults to the DEMO_MODE environment variable.
+
+    ``transport`` is ``mcp`` (the real path: MCP server over stdio, calling the
+    provider gateway over HTTP) or ``direct`` (in-process lookups). Defaults to
+    TOOL_TRANSPORT, and falls back to direct with a note if the gateway is down.
     """
     case = db.get_case(applicant_id, db_path)
     if demo_mode is None:
         demo_mode = demo.is_demo_mode()
     if client is None:
         client = demo.DemoClient(case) if demo_mode else _client()
-    yield {"type": "start", "case": case, "demo_mode": demo_mode}
+
+    active_transport, transport_note = tools.resolve_transport(transport)
+    bridge = None
+    if active_transport == tools.TRANSPORT_MCP:
+        try:
+            bridge = tools.open_bridge(active_transport)
+            tool_list = tools.build_tool_list(active_transport, bridge)
+        except (McpUnavailable, Exception) as exc:
+            # The gateway answered but the MCP server itself would not start.
+            # Say so and carry on in-process rather than failing the case.
+            if bridge is not None:
+                bridge.close()
+                bridge = None
+            active_transport = tools.TRANSPORT_DIRECT
+            transport_note = f"Could not start the MCP server ({exc}); using in-process lookups."
+            tool_list = tools.build_tool_list(active_transport)
+    else:
+        tool_list = tools.build_tool_list(active_transport)
+
+    yield {
+        "type": "start",
+        "case": case,
+        "demo_mode": demo_mode,
+        "transport": active_transport,
+        "transport_note": transport_note,
+    }
+    try:
+        yield from _investigate(
+            applicant_id, case, client, db_path, demo_mode, active_transport, bridge, tool_list
+        )
+    finally:
+        if bridge is not None:
+            bridge.close()
+
+
+def _investigate(
+    applicant_id: int,
+    case: dict,
+    client: Any,
+    db_path,
+    demo_mode: bool,
+    active_transport: str,
+    bridge: Any,
+    tool_list: list[dict],
+) -> Iterator[dict[str, Any]]:
+    """The loop proper. Split out so run_investigation can guarantee the MCP
+    bridge is closed even if the caller abandons the generator."""
 
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": build_opening_prompt(case)}
@@ -190,7 +242,7 @@ def run_investigation(
                 max_tokens=MAX_TOKENS,
                 system=SYSTEM_PROMPT,
                 thinking={"type": "adaptive", "display": "summarized"},
-                tools=tools.TOOLS,
+                tools=tool_list,
                 messages=messages,
                 betas=[FALLBACK_BETA],
                 fallbacks="default",
@@ -316,7 +368,12 @@ def run_investigation(
 
             yield {"type": "tool_call", "tool": tool_use.name, "input": tool_use.input}
             output, is_error = tools.execute_tool(
-                tool_use.name, dict(tool_use.input), applicant_id, db_path
+                tool_use.name,
+                dict(tool_use.input),
+                applicant_id,
+                db_path,
+                transport=active_transport,
+                bridge=bridge,
             )
             trail.append({
                 "tool": tool_use.name,
