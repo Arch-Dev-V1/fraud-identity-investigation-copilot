@@ -81,6 +81,61 @@ write to the audit log. It stays in-process next to the guardrail it depends on.
 Only the agent knows which case is open, and the MCP server is a generic surface that must not be
 trusted to enforce it. A test checks the guard holds over MCP as well as in-process.
 
+## Seeing the HTTP traffic
+
+Four ways, depending on what you want to look at.
+
+**Poke the endpoints by hand — Swagger UI.** FastAPI generates it, so it is
+already there whenever the gateway is running:
+
+```
+http://127.0.0.1:8000/docs        interactive — "Try it out" runs a real request
+http://127.0.0.1:8000/redoc       read-only reference
+http://127.0.0.1:8000/openapi.json
+```
+
+**Read one payload in the terminal.**
+
+```bash
+python probe.py 1                  # every lookup for applicant 1
+python probe.py 3 --only shared    # just the shared-identifier response
+python probe.py 1 --compact        # status and size only
+curl -s localhost:8000/v1/applicants/1/ssn-verification | python -m json.tool
+```
+
+**Watch the agent's calls arrive while you use the app.** `run.sh` leaves
+uvicorn access logs on, so every request the agent makes appears in the gateway
+console. For more than a status line, set the trace flag:
+
+```bash
+PROVIDER_API_TRACE=1    ./run.sh    # method, path, status, duration, size
+PROVIDER_API_TRACE=body ./run.sh    # the same, plus each response body
+```
+
+With `=body`, starting an investigation prints the full provider response as the
+agent receives it:
+
+```
+  → GET /v1/applicants/6/ssn-verification 200 · 1ms · 534B
+      {
+        "request": { "name": "Nadia Osei-Kwame", "ssn": "588-71-4402", ... },
+        "result": {
+          "ecbsv_match": true,
+          "ssn_first_observed": "2021-10",
+          "dob_consistent_with_header": false,
+          ...
+```
+
+Tracing is off by default on purpose: these bodies carry names, SSNs and
+addresses. They are fabricated here, but a gateway that logs provider responses
+in full is not something you would ship, so it stays opt-in.
+
+**See what the agent actually saw.** In the app, expand **result from
+`<tool>`** in the investigation feed, or **Tool-call trail (audit_log)** under a
+finished memo. On the MCP transport those payloads *are* the HTTP response
+bodies, passed through unchanged — so that expander is the agent's-eye view of
+the same traffic, and the trail is the persisted copy.
+
 ## Using the MCP server from other clients
 
 It also serves over HTTP:
@@ -205,6 +260,7 @@ mistype it into someone else's file, and it keeps personal data out of
 ```
 ├── app.py                    # Streamlit UI: feed, memo, decision buttons
 ├── investigate.py            # same loop, from the terminal
+├── probe.py                  # call the gateway directly, print the response
 ├── run.sh                    # gateway + app
 ├── agent/
 │   ├── loop.py               # tool-use loop with Claude

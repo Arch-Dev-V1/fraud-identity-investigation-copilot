@@ -6,14 +6,18 @@ cd "$(dirname "$0")"
 
 PYTHON="${PYTHON:-.venv/bin/python}"
 PORT="${PROVIDER_API_PORT:-8000}"
+# Access logs are on so you can watch the agent's calls arrive. Set
+# PROVIDER_API_TRACE=1 for a timing/size line per request, or =body to print
+# each response body as well.
+LOG_LEVEL="${PROVIDER_API_LOG_LEVEL:-info}"
 
 if [ ! -f db/cases.db ]; then
   echo "Seeding the case database..."
   "$PYTHON" db/seed.py
 fi
 
-echo "Starting provider gateway on :$PORT ..."
-"$PYTHON" -m uvicorn provider_api.main:app --port "$PORT" --log-level warning &
+echo "Starting provider gateway on :$PORT  (docs: http://127.0.0.1:$PORT/docs)"
+"$PYTHON" -m uvicorn provider_api.main:app --port "$PORT" --log-level "$LOG_LEVEL" &
 GATEWAY_PID=$!
 trap 'kill $GATEWAY_PID 2>/dev/null || true' EXIT
 
