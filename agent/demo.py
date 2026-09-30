@@ -2,9 +2,9 @@
 
 This is not a mock of the app; it is a mock of one thing only. The real loop
 runs, the real tools query the real database, the real audit_log row is written
-and the real guardrails apply. What is replaced is Claude: ``DemoClient`` stands
-in for the client and returns a scripted sequence of turns, then synthesizes the
-memo from the tool results it actually received.
+and the real guardrails apply. What is replaced is the model: ``DemoClient``
+stands in for the API client and returns a scripted sequence of turns, then
+synthesizes the memo from the tool results it actually received.
 
 So demo mode exercises everything except the reasoning. It is honest about that:
 memos it produces are labelled, in the UI and in audit_log, as canned.
@@ -24,8 +24,20 @@ TRUTHY = {"1", "true", "yes", "on"}
 
 DEMO_BANNER = (
     "> **Demo mode** — this memo was assembled by a canned analyzer from real "
-    "tool results. No model call was made, so the reasoning and the prose are "
-    "not Claude's."
+    "tool results. No model call was made, so neither the reasoning nor the "
+    "prose is model-generated."
+)
+
+# What the canned analyzer says when the analyst is chatting rather than asking
+# for an investigation. It is deliberately explicit that no model answered.
+DEMO_CHAT_REPLY = (
+    "**Demo mode — no model call was made, so this is a canned reply.**\n\n"
+    "In demo mode I can run a full investigation on the selected case: the real "
+    "tools, the real provider lookups and the real audit trail, with the memo "
+    "assembled from the actual tool results. Use **Run investigation** for "
+    "that.\n\n"
+    "Free-form questions need a live model, which needs an API key. Set "
+    "`ANTHROPIC_API_KEY` and switch demo mode off in the sidebar to ask them."
 )
 
 
@@ -431,8 +443,9 @@ def _synthesize_memo(case: dict, results: dict[str, dict]) -> dict:
 
 
 class _DemoMessages:
-    def __init__(self, case: dict) -> None:
+    def __init__(self, case: dict, investigate: bool = True) -> None:
         self.case = case
+        self.investigate = investigate
         self.turn = 0
         self._pending: dict[str, str] = {}   # tool_use_id -> tool name
         self.results: dict[str, dict] = {}
@@ -465,6 +478,11 @@ class _DemoMessages:
         self._absorb(kwargs.get("messages") or [])
         self.turn += 1
         applicant_id = self.case["id"]
+
+        if not self.investigate:
+            # An ordinary chat turn. Ending with text and no tool call is what
+            # tells the loop this is a complete reply.
+            return self._emit([_text(DEMO_CHAT_REPLY)], "end_turn")
 
         if self.turn == 1:
             return self._emit(
@@ -511,7 +529,7 @@ class _DemoMessages:
 
 
 class DemoClient:
-    """Quacks like ``anthropic.Anthropic`` for the one call the loop makes."""
+    """Quacks like the API client for the one call the loop makes."""
 
-    def __init__(self, case: dict) -> None:
-        self.beta = _Block(messages=_DemoMessages(case))
+    def __init__(self, case: dict, investigate: bool = True) -> None:
+        self.beta = _Block(messages=_DemoMessages(case, investigate=investigate))

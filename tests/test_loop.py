@@ -137,6 +137,61 @@ def check_demo_mode(failures: list[str]) -> None:
         failures.append("demo mode must still leave analyst_decision NULL")
 
 
+def check_chat_turn(failures: list[str]) -> None:
+    """A chat turn must answer without writing a memo, and conversation history
+    must carry from one turn to the next."""
+    tmp = Path(tempfile.mkdtemp()) / "cases.db"
+    seed.build(tmp, seed.SCHEMA_PATH)
+
+    events = list(loop.run_investigation(
+        1, db_path=tmp, demo_mode=True,
+        user_message="What does ECOA code 3 mean?", require_memo=False,
+    ))
+    kinds = [e["type"] for e in events]
+    if "reply" not in kinds:
+        failures.append(f"a chat turn should yield a reply, got {kinds}")
+    if "memo" in kinds:
+        failures.append("a chat turn must not submit a memo")
+    if kinds[-1] != "done":
+        failures.append(f"a chat turn should finish cleanly, got {kinds[-1]}")
+
+    conn = sqlite3.connect(tmp)
+    rows = conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+    conn.close()
+    if rows:
+        failures.append(f"a chat turn must not write to audit_log, got {rows} row(s)")
+
+    history = next(
+        (e["messages"] for e in events if e["type"] == "turn_complete"), None
+    )
+    if not history:
+        failures.append("a chat turn should report its messages for the next turn")
+        return
+
+    # A second turn on top of that history must keep the earlier messages.
+    followup = list(loop.run_investigation(
+        1, db_path=tmp, demo_mode=True, user_message="And the payment profile?",
+        history=history, require_memo=False,
+    ))
+    grown = next((e["messages"] for e in followup if e["type"] == "turn_complete"), [])
+    if len(grown) <= len(history):
+        failures.append(
+            f"history should grow across turns: {len(history)} -> {len(grown)}"
+        )
+
+    # An investigation turn on the same case still writes exactly one memo.
+    list(loop.run_investigation(1, db_path=tmp, demo_mode=True))
+    conn = sqlite3.connect(tmp)
+    rows = conn.execute(
+        "SELECT analyst_decision FROM audit_log"
+    ).fetchall()
+    conn.close()
+    if len(rows) != 1:
+        failures.append(f"one investigation should write one memo, got {len(rows)}")
+    elif rows[0][0] is not None:
+        failures.append("analyst_decision must still be NULL")
+
+
 def check_mcp_transport(failures: list[str]) -> None:
     """Exercise the real MCP path — agent -> MCP server -> provider gateway ->
     SQLite — without a subprocess or a socket.
@@ -280,6 +335,7 @@ def main() -> int:
     conn.close()
 
     check_demo_mode(failures)
+    check_chat_turn(failures)
     check_mcp_transport(failures)
 
     for failure in failures:
@@ -287,7 +343,7 @@ def main() -> int:
     if failures:
         return 1
     print(f"ok — {len(events)} events, {len(trail)} tool calls, audit_log clean; "
-          "demo mode ok on 3 cases; mcp transport ok")
+          "demo mode ok on 3 cases; chat turns ok; mcp transport ok")
     return 0
 
 

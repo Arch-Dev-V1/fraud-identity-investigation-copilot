@@ -162,11 +162,29 @@ def run_investigation(
     db_path=None,
     demo_mode: bool | None = None,
     transport: str | None = None,
+    user_message: str | None = None,
+    history: list[dict[str, Any]] | None = None,
+    require_memo: bool = True,
 ) -> Iterator[dict[str, Any]]:
-    """Investigate one case, yielding events as they happen.
+    """Run one turn against a case, yielding events as they happen.
 
     Event types: ``start``, ``thinking``, ``narration``, ``tool_call``,
-    ``tool_result``, ``search``, ``memo``, ``error``, ``done``.
+    ``tool_result``, ``search``, ``reply``, ``memo``, ``turn_complete``,
+    ``error``, ``done``.
+
+    ``user_message`` is the analyst's message for this turn. Left out, the
+    agent is handed the generated case brief instead, which is what the
+    "run investigation" path sends.
+
+    ``history`` is the prior conversation, as returned by the last
+    ``turn_complete`` event, so the agent can be talked to across turns rather
+    than only once per case.
+
+    ``require_memo`` distinguishes the two things an analyst can ask for. True
+    (running an investigation) means a turn that ends without calling
+    submit_case_memo gets nudged back. False (an ordinary chat message) means a
+    plain text answer is a complete, correct response — asking "what does ECOA
+    3 mean" should not force a memo.
 
     ``demo_mode`` replaces Claude with a canned analyzer so the whole flow runs
     with no API key and no cost; everything else — tools, database, guardrails —
@@ -180,7 +198,7 @@ def run_investigation(
     if demo_mode is None:
         demo_mode = demo.is_demo_mode()
     if client is None:
-        client = demo.DemoClient(case) if demo_mode else _client()
+        client = demo.DemoClient(case, investigate=require_memo) if demo_mode else _client()
 
     active_transport, transport_note = tools.resolve_transport(transport)
     bridge = None
@@ -209,7 +227,8 @@ def run_investigation(
     }
     try:
         yield from _investigate(
-            applicant_id, case, client, db_path, demo_mode, active_transport, bridge, tool_list
+            applicant_id, case, client, db_path, demo_mode, active_transport,
+            bridge, tool_list, user_message, history, require_memo,
         )
     finally:
         if bridge is not None:
@@ -225,15 +244,23 @@ def _investigate(
     active_transport: str,
     bridge: Any,
     tool_list: list[dict],
+    user_message: str | None = None,
+    history: list[dict[str, Any]] | None = None,
+    require_memo: bool = True,
 ) -> Iterator[dict[str, Any]]:
     """The loop proper. Split out so run_investigation can guarantee the MCP
     bridge is closed even if the caller abandons the generator."""
 
-    messages: list[dict[str, Any]] = [
-        {"role": "user", "content": build_opening_prompt(case)}
-    ]
+    messages: list[dict[str, Any]] = list(history or [])
+    messages.append({
+        "role": "user",
+        "content": user_message or build_opening_prompt(case),
+    })
     trail: list[dict[str, Any]] = []  # goes to audit_log.tool_calls_made
     nudges = 0
+    # Text the agent produced this turn, so a chat reply can be handed back as
+    # one message rather than as loose narration events.
+    said: list[str] = []
 
     for _ in range(MAX_TURNS):
         try:
@@ -279,6 +306,7 @@ def _investigate(
             if block.type == "thinking" and getattr(block, "thinking", ""):
                 yield {"type": "thinking", "text": block.thinking}
             elif block.type == "text" and block.text.strip():
+                said.append(block.text)
                 yield {"type": "narration", "text": block.text}
             elif block.type == "server_tool_use" and block.name == "web_search":
                 query = (block.input or {}).get("query", "")
@@ -317,7 +345,20 @@ def _investigate(
         tool_uses = [b for b in response.content if b.type == "tool_use"]
 
         if not tool_uses:
+            if not require_memo:
+                # An ordinary chat turn: a text answer is the whole response.
+                yield {
+                    "type": "reply",
+                    "text": "\n\n".join(said).strip() or "(no reply)",
+                }
+                yield {"type": "turn_complete", "messages": messages}
+                yield {"type": "done"}
+                return
             if nudges >= MAX_NUDGES:
+                # Give back whatever was actually said rather than losing it.
+                if said:
+                    yield {"type": "reply", "text": "\n\n".join(said).strip()}
+                    yield {"type": "turn_complete", "messages": messages}
                 yield {
                     "type": "error",
                     "message": "The agent finished without submitting a case memo.",
@@ -355,6 +396,15 @@ def _investigate(
                     confidence_level=memo["confidence_level"],
                     db_path=db_path,
                 )
+                messages.append({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": tool_use.id,
+                        "content": f"Memo saved as audit_log row {audit_log_id}. "
+                                   "A human analyst decides the disposition.",
+                    }],
+                })
                 yield {
                     "type": "memo",
                     "demo_mode": demo_mode,
@@ -363,6 +413,7 @@ def _investigate(
                     "audit_log_id": audit_log_id,
                     "trail": trail,
                 }
+                yield {"type": "turn_complete", "messages": messages}
                 yield {"type": "done"}
                 return
 

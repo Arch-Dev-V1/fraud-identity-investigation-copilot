@@ -147,6 +147,14 @@ Notes on the tools:
 5. It calls `submit_case_memo`: timeline, evidence, counter-narrative, and a
    confidence level — never a bare yes/no verdict.
 
+The loop runs one turn at a time and is conversational. `run_investigation`
+takes `user_message` (the analyst's message; omitted, the generated case brief
+is used), `history` (the prior turns, handed back by the `turn_complete` event),
+and `require_memo`. `require_memo=True` is the Run-investigation path and nudges
+a turn that ends without a memo; `False` is an ordinary chat message, where a
+plain text answer is a complete response — asking what ECOA 3 means must not
+force a memo, and must not write to `audit_log`.
+
 Implemented as a manual tool-use loop rather than the SDK's tool runner: the UI
 needs an event per step to drive `st.status`, `web_search` can end a turn with
 `pause_turn` (which the Python runner does not auto-resume), and
@@ -179,10 +187,33 @@ stubbed client in `tests/test_loop.py` — not only against the live API.
   `agent.record_analyst_decision`, called from the UI buttons.
 
 ## UI layout
-Two panels. Left: live investigation status feed, settling into the case memo.
-Right: case snapshot (name, score, risk tier) and the decision buttons
-(Approve / Reject / Ask for more evidence) — always visible, no scrolling needed
-to find them.
+Two panels, chat-first.
+
+Left — the conversation with the agent: the message transcript, the live
+investigation feed while a turn runs, then the composer with **Run
+investigation** and **Send** directly below it. Memos appear in the transcript
+as the agent's reply, so the results read as part of the conversation rather
+than a separate pane.
+
+Right — the flagged-case feed (selected case highlighted), the snapshot for
+whichever case is selected (score, sub-scores, applicant details, reason codes),
+and the decision buttons (Approve / Reject / Ask for more evidence).
+
+Selecting a case drops that case's brief into the composer, so the analyst can
+send it as-is, edit it, or add a question. A brief is only inserted when the
+composer is empty or still holds an unedited brief — a typed draft is never
+discarded, and **Refill brief** loads it deliberately.
+
+Two things about the composer that are easy to get wrong:
+- Its text lives in `composer_draft`, not in the widget's key. Streamlit forbids
+  writing a widget's key after that widget has been instantiated, and the send
+  buttons render below the box, so clearing it on send requires rotating the
+  widget key (`composer_nonce`) instead.
+- The rows from `list_cases()` are feed summaries with no `claimed_dob`. Build a
+  brief from `get_case()`, never from a feed row.
+
+No model or vendor name appears anywhere in the UI. Keep it that way — the
+sidebar says "Live mode" or "Demo mode", not which model is behind it.
 
 ## Explicitly not needed for this POC
 No embeddings, no vector database, no RAG, no live regulated data, no vendor

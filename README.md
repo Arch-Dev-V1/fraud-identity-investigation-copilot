@@ -178,6 +178,28 @@ falls back to direct when it isn't.
 What demo mode does **not** cover is the reasoning — which tools the agent chooses and what it
 makes of the results. That needs a key.
 
+## Using it
+
+The app is chat-first. Left is the conversation with the agent; right is the
+flagged-case feed and the case snapshot.
+
+Selecting a case drops its brief into the composer. From there:
+
+- **Run investigation** sends that brief as an investigation request. The agent
+  picks its own tools, works the case, and submits a memo — which appears in the
+  transcript as its reply, with the step-by-step feed and the audit trail
+  expandable beneath it.
+- **Send** is an ordinary message. Ask what a reason code means, or push back on
+  a finding, and you get an answer without forcing a memo.
+- Conversation history carries across turns, so you can follow up on a memo the
+  agent just wrote.
+- **Refill brief** reloads the selected case's brief; **Clear chat** starts the
+  case over. A draft you have typed is never overwritten by switching cases.
+
+The decision buttons sit on the right under the snapshot and unlock once a memo
+exists. Free-form chat needs a live model; demo mode answers investigation
+requests and says plainly that it cannot answer open questions.
+
 ## The guardrail
 
 The agent is advisory. There is no approve, reject, or escalate tool — not a rule it is asked to
@@ -258,7 +280,7 @@ mistype it into someone else's file, and it keeps personal data out of
 ## Layout
 
 ```
-├── app.py                    # Streamlit UI: feed, memo, decision buttons
+├── app.py                    # Streamlit UI: chat, case feed, decision buttons
 ├── investigate.py            # same loop, from the terminal
 ├── probe.py                  # call the gateway directly, print the response
 ├── run.sh                    # gateway + app
