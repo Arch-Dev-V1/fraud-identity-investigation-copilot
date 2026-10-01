@@ -17,10 +17,14 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Iterator
 
+import logging
+
 import anthropic
 
 from . import db, demo, tools
 from .mcp_bridge import McpUnavailable
+
+log = logging.getLogger(__name__)
 
 MODEL = "claude-opus-5"
 MAX_TOKENS = 16000
@@ -87,6 +91,44 @@ When you are done, call submit_case_memo exactly once.
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+# The four token classes bill at four different rates, so they are kept apart
+# rather than summed. web_search is a per-use fee on top of tokens.
+_USAGE_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+)
+
+
+def _usage_snapshot(response: Any) -> dict[str, int] | None:
+    """Pull the usage meters off one response.
+
+    Returns None in demo mode, where there is no real usage to report — a zero
+    would read as "this cost nothing to run", which is true, but a fabricated
+    token count would not be.
+    """
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    snapshot = {field: int(getattr(usage, field, 0) or 0) for field in _USAGE_FIELDS}
+    details = getattr(usage, "output_tokens_details", None)
+    if details is not None:
+        snapshot["thinking_tokens"] = int(getattr(details, "thinking_tokens", 0) or 0)
+    server = getattr(usage, "server_tool_use", None)
+    if server is not None:
+        snapshot["web_search_requests"] = int(getattr(server, "web_search_requests", 0) or 0)
+    return snapshot
+
+
+def _total_usage(snapshots: list[dict[str, int]]) -> dict[str, int]:
+    totals: dict[str, int] = {}
+    for snapshot in snapshots:
+        for key, value in snapshot.items():
+            totals[key] = totals.get(key, 0) + value
+    return totals
 
 
 def build_opening_prompt(case: dict) -> str:
@@ -257,6 +299,7 @@ def _investigate(
         "content": user_message or build_opening_prompt(case),
     })
     trail: list[dict[str, Any]] = []  # goes to audit_log.tool_calls_made
+    usage_log: list[dict[str, int]] = []   # one entry per model call
     nudges = 0
     # Text the agent produced this turn, so a chat reply can be handed back as
     # one message rather than as loose narration events.
@@ -292,6 +335,13 @@ def _investigate(
         except Exception as exc:  # backstop: the caller always gets an event
             yield {"type": "error", "message": f"{type(exc).__name__}: {exc}"}
             return
+
+        snapshot = _usage_snapshot(response)
+        if snapshot is not None:
+            usage_log.append(snapshot)
+            log.info("turn usage applicant=%s %s", applicant_id, snapshot)
+            yield {"type": "usage", "usage": snapshot,
+                   "totals": _total_usage(usage_log)}
 
         if response.stop_reason == "refusal":
             detail = getattr(response, "stop_details", None)
@@ -350,6 +400,7 @@ def _investigate(
                 yield {
                     "type": "reply",
                     "text": "\n\n".join(said).strip() or "(no reply)",
+                    "usage_totals": _total_usage(usage_log),
                 }
                 yield {"type": "turn_complete", "messages": messages}
                 yield {"type": "done"}
@@ -379,11 +430,14 @@ def _investigate(
         for tool_use in tool_uses:
             if tool_use.name in tools.TERMINAL_TOOLS:
                 memo = dict(tool_use.input)
+                totals = _total_usage(usage_log)
                 trail.append({
                     "tool": tool_use.name,
                     "input": {"confidence_level": memo.get("confidence_level")},
                     "output": "memo written to audit_log",
                     "demo_mode": demo_mode,
+                    "model_calls": len(usage_log),
+                    "token_usage": totals or "not recorded (demo mode)",
                     "timestamp": _utcnow(),
                 })
                 markdown = memo_to_markdown(memo, case)
@@ -408,6 +462,7 @@ def _investigate(
                 yield {
                     "type": "memo",
                     "demo_mode": demo_mode,
+                    "usage_totals": totals,
                     "memo": memo,
                     "markdown": markdown,
                     "audit_log_id": audit_log_id,
