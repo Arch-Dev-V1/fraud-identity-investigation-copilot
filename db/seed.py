@@ -18,10 +18,21 @@ import sys
 from datetime import date
 from pathlib import Path
 
-# Metro 2 ECOA codes — the real single-character domain.
-IND = "1"   # individual
-JOINT = "2" # joint, contractually liable
-AU = "3"    # authorized user
+# Importable both as `python db/seed.py` and as `db.seed`: the script form puts
+# only db/ on the path, so the project root has to be added for the
+# provider_api and db imports below to resolve.
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from db import eval_cases                      # noqa: E402
+from provider_api import metro2                 # noqa: E402
+
+# Metro 2 ECOA codes — the real single-character domain, from the one module
+# that owns the field so the seed and the lookups cannot disagree.
+IND = metro2.ECOA_INDIVIDUAL
+JOINT = metro2.ECOA_JOINT
+AU = metro2.ECOA_AUTHORIZED_USER
 
 # The 24-month payment history profiles are generated relative to this date,
 # so the demo data stays internally consistent.
@@ -208,6 +219,9 @@ def _months_between(start: date, end: date) -> int:
     return (end.year - start.year) * 12 + (end.month - start.month)
 
 
+_EXTRA_OVERRIDES: dict = {}
+
+
 def payment_history_profile(
     applicant_id: int, creditor: str, open_date: str, status: str
 ) -> str:
@@ -218,7 +232,10 @@ def payment_history_profile(
     """
     opened = date.fromisoformat(open_date)
     months = max(0, min(24, _months_between(opened, AS_OF)))
-    overrides = PAYMENT_OVERRIDES.get((applicant_id, creditor), {})
+    overrides = PAYMENT_OVERRIDES.get(
+        (applicant_id, creditor),
+        _EXTRA_OVERRIDES.get((applicant_id, creditor), {}),
+    )
     profile = [overrides.get(i, "0") for i in range(months)]
     if status == "closed" and months:
         # A closed account stops reporting activity; the months still read as
@@ -227,26 +244,30 @@ def payment_history_profile(
     return "".join(profile) + "B" * (24 - months)
 
 
-def build(db_path: Path, schema_path: Path) -> None:
+def build(db_path: Path, schema_path: Path, include_eval_cases: bool = True) -> None:
+    extra = eval_cases if include_eval_cases else None
+    if extra:
+        _EXTRA_OVERRIDES.update(extra.payment_overrides())
     conn = sqlite3.connect(db_path)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.executescript(schema_path.read_text())
+        applicants = APPLICANTS + (extra.applicants() if extra else [])
         conn.executemany(
             "INSERT INTO applicants (id, name, ssn, claimed_dob, claimed_address,"
             " claimed_phone, claimed_email) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            APPLICANTS,
+            applicants,
         )
         conn.executemany(
             "INSERT INTO scores (applicant_id, abuse_score, first_party_synthetic_score,"
             " third_party_synthetic_score, risk_tier, reason_codes) VALUES (?, ?, ?, ?, ?, ?)",
-            SCORES,
+            SCORES + (extra.scores() if extra else []),
         )
         conn.executemany(
             "INSERT INTO ssn_verification_checks (applicant_id, ecbsv_match,"
             " ssn_first_observed, dob_consistent_with_header, notes)"
             " VALUES (?, ?, ?, ?, ?)",
-            SSN_CHECKS,
+            SSN_CHECKS + (extra.ssn_checks() if extra else []),
         )
         conn.executemany(
             "INSERT INTO tradelines (applicant_id, account_open_date, ecoa_code,"
@@ -254,14 +275,14 @@ def build(db_path: Path, schema_path: Path) -> None:
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (*row, payment_history_profile(row[0], row[3], row[1], row[6]))
-                for row in TRADELINES
+                for row in TRADELINES + (extra.tradelines() if extra else [])
             ],
         )
         conn.executemany(
             "INSERT INTO shared_identifiers (applicant_id, identifier_type,"
             " identifier_value, linked_applicant_id, first_seen, last_seen)"
             " VALUES (?, ?, ?, ?, ?, ?)",
-            SHARED_IDENTIFIERS,
+            SHARED_IDENTIFIERS + (extra.shared_identifiers() if extra else []),
         )
         conn.commit()
     finally:
@@ -282,9 +303,18 @@ def main(argv: list[str] | None = None) -> int:
         args.db.unlink()
 
     build(args.db, SCHEMA_PATH)
+    conn = sqlite3.connect(args.db)
+    counts = {
+        table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        for table in ("applicants", "tradelines", "shared_identifiers", "audit_log")
+    }
+    conn.close()
     print(
-        f"Seeded {args.db}: {len(APPLICANTS)} applicants, {len(TRADELINES)} tradelines, "
-        f"{len(SHARED_IDENTIFIERS)} shared-identifier rows, 0 audit_log rows."
+        f"Seeded {args.db}: {counts['applicants']} applicants "
+        f"({len(APPLICANTS)} hand-built + {counts['applicants'] - len(APPLICANTS)} synthesized "
+        f"for the eval), {counts['tradelines']} tradelines, "
+        f"{counts['shared_identifiers']} shared-identifier rows, "
+        f"{counts['audit_log']} audit_log rows."
     )
     return 0
 
