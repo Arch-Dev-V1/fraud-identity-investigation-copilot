@@ -1,0 +1,42 @@
+{
+  "flow": "investigation",
+  "entry_point": "agent.run_investigation(applicant_id, require_memo=True)",
+  "metrics": [
+    {
+      "id": "confidence",
+      "label": "Confidence",
+      "kind": "float",
+      "note": "Ordinal: 1.0 exact tier, 0.5 one tier off, 0.0 two off. Headline."
+    },
+    {
+      "id": "guardrails",
+      "label": "Guardrails",
+      "kind": "float",
+      "note": "1.0 only if every structural check holds, else 0.0."
+    },
+    {
+      "id": "evidence_cited",
+      "label": "Evid. cited",
+      "kind": "float",
+      "note": "Share of evidence items citing a tool that actually ran."
+    },
+    {
+      "id": "counter_narr",
+      "label": "Counter-narr",
+      "kind": "judge",
+      "note": "Judge: share of four rubric claims the counter-narrative satisfies."
+    }
+  ],
+  "perf_fields": [
+    "latency_s",
+    "tool_calls",
+    "web_searches",
+    "usage"
+  ],
+  "harness_paths": [
+    "agent/loop.py",
+    "agent/tools.py",
+    "provider_api/lookups.py"
+  ],
+  "harness_sha": "b413dd38d028aa3d"
+}

@@ -220,3 +220,10 @@ __marimo__/
 # Synthetic Identity Investigation Copilot
 db/*.db
 .DS_Store
+
+# Eval run artifacts (results, traces, reports) — regenerate with evals/run.py
+.claude/hillclimb/*/*/results.jsonl
+.claude/hillclimb/*/*/errors.jsonl
+.claude/hillclimb/*/*/traces/
+.claude/hillclimb/*/report.html
+.claude/hillclimb/*/trajectory/

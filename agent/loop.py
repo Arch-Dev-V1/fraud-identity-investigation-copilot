@@ -366,7 +366,11 @@ def _investigate(
         if snapshot is not None:
             usage_log.append(snapshot)
             log.info("turn usage applicant=%s %s", applicant_id, snapshot)
+            # The served model, from the response rather than from config: a
+            # silent substitution (a provider fallback, a capacity reroute)
+            # would otherwise invalidate any comparison built on these runs.
             yield {"type": "usage", "usage": snapshot,
+                   "model": getattr(response, "model", None),
                    "totals": _total_usage(usage_log)}
 
         if response.stop_reason == "refusal":
