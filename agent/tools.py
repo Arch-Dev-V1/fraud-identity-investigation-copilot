@@ -173,7 +173,19 @@ SUBMIT_CASE_MEMO = {
 
 # web_search is Anthropic-hosted; there is no implementation because it does
 # not run locally.
-WEB_SEARCH = {"type": "web_search_20260209", "name": "web_search", "max_uses": 4}
+#
+# max_uses is a cost control, not just a guard rail. Web search bills a per-use
+# fee on top of tokens ($10 per 1,000 searches as published), and the results
+# then become input tokens that are resent on every later turn. Four searches
+# could cost more than the entire token bill for one investigation, and the
+# tool is only meant to supply general typology context — one or two searches
+# is what that actually needs.
+WEB_SEARCH_MAX_USES = int(os.environ.get("WEB_SEARCH_MAX_USES", "2"))
+WEB_SEARCH = {
+    "type": "web_search_20260209",
+    "name": "web_search",
+    "max_uses": WEB_SEARCH_MAX_USES,
+}
 
 LOOKUP_NAMES = tuple(LOOKUPS)
 TERMINAL_TOOLS = {"submit_case_memo"}
