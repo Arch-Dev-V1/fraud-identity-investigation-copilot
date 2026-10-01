@@ -38,6 +38,31 @@ MAX_NUDGES = 2
 # `fallbacks` arguments below to turn this off.
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
+# Prompt caching. Every turn resends the whole conversation, so without this the
+# system prompt and tool schemas are re-billed at full input rate on each call —
+# measured at over half the input of a single investigation, and two thirds of a
+# session once the analyst asks follow-ups.
+#
+# Two breakpoints, which is the shape that holds up for an agent loop:
+#   - an explicit one on the system prompt. Render order is tools -> system ->
+#     messages, so a breakpoint on the last system block caches the whole stable
+#     prefix: tool schemas included.
+#   - top-level automatic caching, which handles the growing message tail.
+#
+# TTL: the default 5 minutes covers an investigation, whose turns land seconds
+# apart. Chat follow-ups arrive at human speed and can miss it. "1h" writes at
+# 2x instead of 1.25x, so it only pays if it prevents enough misses — switch it
+# only on measured gaps between requests, not on a hunch.
+CACHE_TTL = "5m"
+
+
+def _cached_system() -> list[dict[str, Any]]:
+    """The system prompt as a cache breakpoint over the stable prefix."""
+    cache_control: dict[str, Any] = {"type": "ephemeral"}
+    if CACHE_TTL != "5m":
+        cache_control["ttl"] = CACHE_TTL
+    return [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": cache_control}]
+
 SYSTEM_PROMPT = """\
 You are an investigator on a financial-crime team. A scoring provider has \
 flagged an application as a possible synthetic identity — an identity that was \
@@ -310,7 +335,8 @@ def _investigate(
             response = client.beta.messages.create(
                 model=MODEL,
                 max_tokens=MAX_TOKENS,
-                system=SYSTEM_PROMPT,
+                system=_cached_system(),
+                cache_control={"type": "ephemeral"},
                 thinking={"type": "adaptive", "display": "summarized"},
                 tools=tool_list,
                 messages=messages,
