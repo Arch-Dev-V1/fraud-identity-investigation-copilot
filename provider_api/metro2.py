@@ -42,9 +42,22 @@ def is_authorized_user(code: str | None) -> bool:
     return (code or "").strip() == ECOA_AUTHORIZED_USER
 
 
+# The profile's encoding, stated once in the tool description rather than
+# repeated inside every tradeline. A credit file with seven accounts repeated it
+# seven times, and every later turn in the conversation resent all seven.
+PAYMENT_HISTORY_LEGEND = (
+    "Payment history profiles read most recent month first: '0' current, "
+    "'1'-'6' increasing delinquency (30-59 days through 180+), 'B' no history "
+    "because the account did not exist yet."
+)
+
+
 def summarize_payment_history(profile: str | None) -> dict:
     """Turn the 24-character profile into something a model can reason over
-    without having to count characters."""
+    without having to count characters.
+
+    Deliberately does not carry the legend: see PAYMENT_HISTORY_LEGEND, which
+    the tool description states once into the cached prefix."""
     if not profile:
         return {"months_reported": 0, "note": "No payment history profile reported."}
     reported = [c for c in profile if c != "B"]
@@ -61,5 +74,4 @@ def summarize_payment_history(profile: str | None) -> dict:
             for i, c in delinquent
         ],
         "all_paid_as_agreed": not delinquent,
-        "legend": "Most recent month first. 0 current, 1-6 increasing delinquency, B no history.",
     }

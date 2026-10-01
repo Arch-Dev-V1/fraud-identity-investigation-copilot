@@ -218,13 +218,15 @@ LOOKUP_DESCRIPTIONS = {
         "Return the applicant's credit accounts in date order with Metro 2 "
         "fields: open date, ECOA code, creditor, limit, balance, status, and "
         "the 24-month payment history profile. Use the payment history to tell "
-        "a bust-out from ordinary borrowing — balances alone cannot show it."
+        "a bust-out from ordinary borrowing — balances alone cannot show it. "
+        + metro2.PAYMENT_HISTORY_LEGEND
     ),
     "check_authorized_user_history": (
         "Return only the tradelines where this identity is an authorized user "
         "on someone else's account (Metro 2 ECOA code 3). This is the credit "
         "piggybacking that matures synthetic identities, and also the ordinary "
-        "way a parent helps a teenager build credit."
+        "way a parent helps a teenager build credit. "
+        + metro2.PAYMENT_HISTORY_LEGEND
     ),
     "check_shared_identifiers": (
         "Return phone, address, device, email or IP values on this application "
