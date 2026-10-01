@@ -55,29 +55,43 @@ most, and an aggregate score hides it.
 
 ## Cases
 
-25 cases — 9 `high`, 9 `low`, 7 `medium`. Six are the hand-built archetypes from
-`db/seed.py`; nineteen are generated from specs in `db/eval_cases.py`. Expected
-labels and the labeling policy live in `evals/cases.py`, deliberately apart from
-the data they describe. Read [CASES.md](CASES.md) for the reviewable table.
+50 cases — 17 `high`, 17 `low`, 16 `medium`. Six are the hand-built archetypes
+from `db/seed.py`; forty-four are generated from specs in `db/eval_cases.py`.
+Expected labels and the labeling policy live in `evals/cases.py`, deliberately
+apart from the data they describe. Read [CASES.md](CASES.md) for the reviewable
+table.
 
 `low` means low confidence that the **identity is fabricated** — not that the
-application is fine. Applicants 5 and 18 are real people running first-party
-abuse: correctly `low` here, still a problem for the lender.
+application is fine. Applicants 5, 18 and 40 are real people running
+first-party abuse: correctly `low` here, still a problem for the lender.
+
+Five rings (A–E) at tight velocity, four lone synthetics with no tight ring link
+at all, thirteen legitimate files across ages and thin/mature shapes, four
+adult-issuance cases with a benign cause recorded, and sixteen deliberately
+ambiguous middles. The policy is machine-checked against every benign-cause
+case, so a label and the policy cannot drift apart silently.
 
 ## Resolution — read this before acting on a result
 
-At 25 cases the noise floor on the headline is roughly `1/sqrt(n × reps)`:
+The `1/sqrt(n·reps)` rule is a **conservative bound**: it assumes a binary
+metric at maximum variance and independent samples. This eval's headline is
+continuous and the comparisons that matter are paired, and both beat the bound.
 
-| reps | noise floor |
+| cases × reps | conservative bound |
 | --- | --- |
-| 2 | ±14 points |
-| 3 | ±12 points |
-| 5 | ±9 points |
+| 50 × 2 | ±10 points |
+| 50 × 3 | ±8 points |
+| 50 × 5 | ±6 points |
 
-The published effort curves move 1–3 points on research-shaped work, and the
-Opus 5.5 comparison maybe 2–8. **So this eval is a reliable regression guard and
-not a reliable instrument for the effort sweep.** Treat sweep results as
-directional, or raise cases and reps together before trusting a small delta.
+On a 50 × 2 pass the *measured* half-width for a single config's mean already
+came in at ±5.8 points against that ±10 bound — the continuous metric buys
+roughly half the noise back.
+
+Do not plan reps from the table. Run `python -m evals.power --target 0.05` after
+a real pass: it reads the measured between-case and rep-to-rep variance and
+reports how many reps a paired comparison needs to resolve the difference you
+would act on. On deterministic demo rows it says so and declines to answer,
+rather than returning a flattering number.
 
 ## Properties the runner has
 

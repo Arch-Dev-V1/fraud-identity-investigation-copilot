@@ -1,6 +1,6 @@
 # Eval case set — please review
 
-25 cases: **9 high**, **9 low**, **7 medium**
+50 cases: **17 high**, **17 low**, **16 medium**
 
 6 are the hand-built archetypes you've already seen; 19 are synthesized as
 variations on them. Every applicant in this project is fabricated by design, so there
@@ -51,7 +51,7 @@ synthetic identity, still a problem for the lender.
 | 8 | Marlee Ostrowski | **high** | pass | 2016-09 (+29y) ⚠ | 1 | 73% | 0 | address · 265d · 7; device_id · 4d · 9; email · 6d · 7,9; ip_address · 6d · 7,9 |
 | 9 | Donte Kirkbride | **high** | pass | 2017-07 (+25y) ⚠ | 1 | 78% | 0 | device_id · 4d · 8; email · 6d · 7,8; ip_address · 6d · 7,8 |
 | 10 | Sylvan Brightmore | **high** | pass | 2019-02 (+34y) ⚠ | 1 | 75% | 0 | device_id · 266d · 23 |
-| 11 | Orlaith Fennimore | **high** | pass | 2016-11 (+27y) ⚠ | 1 | 73% | 0 | address · 9d · 12; device_id · 9d · 12 |
+| 11 | Orlaith Fennimore | **high** | pass | 2016-11 (+27y) ⚠ | 1 | 73% | 0 | address · 508d · 12,43; device_id · 9d · 12 |
 | 12 | Rhett Calloway-Brees | **high** | pass | 2017-01 (+26y) ⚠ | 1 | 77% | 0 | address · 9d · 11; device_id · 9d · 11 |
 | 13 | Imogen Hartsfield | **low** | pass | 2020-06 (+16y) | 1 | 10% | 0 | none |
 | 14 | Alton Pemberton | **low** | pass | 1976-05 (+18y) | 0 | 25% | 1 | phone · 589d · 21 |
@@ -65,7 +65,32 @@ synthetic identity, still a problem for the lender.
 | 22 | Arabella Nkemdirim | **medium** | pass | 2018-12 (+30y) ⚠ | 0 | 25% | 1 | none |
 | 23 | Thaddeus Quintrell | **medium** | pass | 1995-07 (+18y) | 0 | 25% | 0 | device_id · 266d · 10 |
 | 24 | Priyanka Vellaisamy | **medium** | pass | 2005-09 (+12y) ⚠ | 1 | 19% | 0 | none |
-| 25 | Emeka Oduya | **medium** | pass | 2004-01 (+18y) | 0 | 25% | 0 | ip_address · 392d · 15,19 |
+| 25 | Emeka Oduya | **medium** | pass | 2004-01 (+18y) | 0 | 25% | 0 | ip_address · 392d · 15,19,48 |
+| 26 | Jarrell Okonjo-Pike | **high** | pass | 2017-02 (+29y) ⚠ | 1 | 76% | 0 | address · 303d · 27; device_id · 8d · 27,28,29; ip_address · 8d · 27,29 |
+| 27 | Lissandra Beauchene | **high** | pass | 2017-06 (+26y) ⚠ | 1 | 72% | 0 | address · 303d · 26; device_id · 8d · 26,28; ip_address · 8d · 26 |
+| 28 | Everard Nakashima | **high** | pass | 2016-12 (+30y) ⚠ | 1 | 77% | 0 | device_id · 8d · 26,27; ip_address · 3d · 29 |
+| 29 | Shondra Villalpando | **high** | pass | 2017-09 (+24y) ⚠ | 1 | 74% | 0 | device_id · 260d · 26,50; ip_address · 7d · 26,28 |
+| 30 | Caspian Motshwane | **high** | pass | 2017-04 (+27y) ⚠ | 1 | 79% | 0 | address · 5d · 31; email · 5d · 31 |
+| 31 | Verity Oyelowo-Hart | **high** | pass | 2016-10 (+27y) ⚠ | 1 | 78% | 0 | address · 5d · 30; email · 5d · 30 |
+| 32 | Thaddea Quillfeather | **high** | pass | 2018-08 (+34y) ⚠ | 1 | 73% | 0 | device_id · 282d · 46 |
+| 33 | Brennus Adeyemi-Croft | **high** | pass | 2018-03 (+31y) ⚠ | 1 | 75% | 0 | none |
+| 34 | Rosalind Featheringay | **low** | pass | 1969-08 (+18y) | 0 | 25% | 0 | none |
+| 35 | Obadiah Winterbourne | **low** | pass | 2003-11 (+0y) | 0 | 23% | 0 | none |
+| 36 | Anneliese Vartoogian | **low** | pass | 2014-07 (+18y) | 1 | 10% | 0 | none |
+| 37 | Ezekiel Thanh-Nguyen | **low** | pass | 1999-03 (+19y) | 0 | 25% | 1 | phone · 531d · 44 |
+| 38 | Marguerite Abaroa | **low** | pass | 2019-11 (+37y) ⚠ | 0 | 23% | 0 | none |
+| 39 | Fitzgerald Amponsah | **low** | pass | 2018-05 (+41y) ⚠ | 0 | 25% | 0 | none |
+| 40 | Delphine Castellanos | **low** | pass | 1987-06 (+18y) | 0 | 52% | 0 | none |
+| 41 | Peregrine Oyedepo | **low** | pass | 2017-10 (+18y) | 0 | 23% | 0 | none |
+| 42 | Ignacio Strathmore | **medium** | pass | 2003-02 (+9y) ⚠ | 0 | 25% | 0 | none |
+| 43 | Clementine Byrd-Nakamura | **medium** | pass | 2004-01 (+19y) | 0 | 25% | 0 | address · 441d · 11 |
+| 44 | Horatio Mbeki-Lund | **medium** | pass | 2019-09 (+36y) ⚠ | 1 | 20% | 0 | phone · 531d · 37 |
+| 45 | Saoirse Deverell | **medium** | pass | 2019-04 (+29y) ⚠ | 0 | 25% | 1 | none |
+| 46 | Lucian Oyarzabal | **medium** | pass | 1997-11 (+18y) | 0 | 25% | 0 | device_id · 282d · 32 |
+| 47 | Perpetua Adewale-Finch | **medium** | pass | 2005-05 (+13y) ⚠ | 1 | 19% | 0 | none |
+| 48 | Amaury Lindgren-Osei | **medium** | pass | 2006-03 (+19y) | 0 | 25% | 0 | ip_address · 346d · 25 |
+| 49 | Rosamund Tchaikovsky | **medium** | pass | 2008-07 (+27y) ⚠ | 0 | 25% | 0 | none |
+| 50 | Kwabena Ferreira-Shaw | **medium** | pass | 2014-02 (+19y) | 0 | 23% | 0 | device_id · 224d · 29 |
 
 ⚠ = header gap flagged as inconsistent with the claimed DOB.
 
@@ -121,3 +146,53 @@ synthetic identity, still a problem for the lender.
   Twelve-year gap with no benign cause either way, plus an AU boost. No links.
 - **25 Emeka Oduya** → `medium`  ·  _ambiguous, wide-span-link, synthesized_  
   Header consistent, but shares an IP with two flagged applicants over wide spans — carrier NAT is the innocent reading.
+- **26 Jarrell Okonjo-Pike** → `high`  ·  _ring, anchor, synthesized_  
+  Ring D anchor: header gap ~29y, AU boost, device+IP across 4 applicants in 8 days.
+- **27 Lissandra Beauchene** → `high`  ·  _ring, synthesized_  
+  Ring D: header gap ~26y, AU boost, device+IP+address with the ring.
+- **28 Everard Nakashima** → `high`  ·  _ring, synthesized_  
+  Ring D: header gap ~30y, AU boost, device+IP with the ring.
+- **29 Shondra Villalpando** → `high`  ·  _ring, synthesized_  
+  Ring D: header gap ~25y, AU boost, IP+device with the ring.
+- **30 Caspian Motshwane** → `high`  ·  _ring, anchor, synthesized_  
+  Ring E: header gap ~27y, AU boost, email+address across a pair in 5 days.
+- **31 Verity Oyelowo-Hart** → `high`  ·  _ring, synthesized_  
+  Ring E: header gap ~27y, AU boost, email+address across a pair in 5 days.
+- **32 Thaddea Quillfeather** → `high`  ·  _lone-synthetic, synthesized_  
+  Header gap ~34y, AU boost, stacking to near-full utilization; only link is a device shared over 282 days. No tight ring velocity.
+- **33 Brennus Adeyemi-Croft** → `high`  ·  _lone-synthetic, synthesized_  
+  Header gap ~31y, AU boost, rapid stacking, no links at all. The purest test of whether the agent can reach high on the trajectory alone.
+- **34 Rosalind Featheringay** → `low`  ·  _legitimate, synthesized_  
+  Header back to 1969, consistent. Organic file, nothing shared.
+- **35 Obadiah Winterbourne** → `low`  ·  _legitimate, thin-file, synthesized_  
+  Header from enumeration at birth, two small accounts, low utilization.
+- **36 Anneliese Vartoogian** → `low`  ·  _legitimate, thin-file, synthesized_  
+  Header first observed two months after a parent's AU line — the ordinary shape of a teenager's first record.
+- **37 Ezekiel Thanh-Nguyen** → `low`  ·  _legitimate, synthesized_  
+  Header back to 1999, consistent. Organic file with one cured 30-day late.
+- **38 Marguerite Abaroa** → `low`  ·  _legitimate, adult-issuance, synthesized_  
+  Header gap with an explicit benign cause recorded, no AU, no links.
+- **39 Fitzgerald Amponsah** → `low`  ·  _legitimate, adult-issuance, synthesized_  
+  Header gap with an explicit benign cause recorded, no AU, no links.
+- **40 Delphine Castellanos** → `low`  ·  _legitimate, first-party-abuse, synthesized_  
+  Third first-party case: header consistent back to 1987, recent stacking all current.
+- **41 Peregrine Oyedepo** → `low`  ·  _legitimate, thin-file, synthesized_  
+  Header consistent with the claimed DOB, small ordinary file, no links.
+- **42 Ignacio Strathmore** → `medium`  ·  _ambiguous, short-gap, synthesized_  
+  Nine-year gap — too short for a built identity, too long to wave away. No links.
+- **43 Clementine Byrd-Nakamura** → `medium`  ·  _ambiguous, wide-span-link, synthesized_  
+  Header consistent, but shares the Ring C address over 441 days. Same building is the innocent reading.
+- **44 Horatio Mbeki-Lund** → `medium`  ·  _ambiguous, adult-issuance, synthesized_  
+  Benign cause recorded, but an AU boost and a shared phone over 531 days pull back.
+- **45 Saoirse Deverell** → `medium`  ·  _ambiguous, conflicting, synthesized_  
+  Header gap with no benign cause, no links, but a delinquency that was then cured.
+- **46 Lucian Oyarzabal** → `medium`  ·  _ambiguous, wide-span-link, synthesized_  
+  Header consistent, ordinary file, but shares a device with applicant 32 over 282 days.
+- **47 Perpetua Adewale-Finch** → `medium`  ·  _ambiguous, short-gap, synthesized_  
+  Thirteen-year gap with no benign cause either way, plus an AU boost.
+- **48 Amaury Lindgren-Osei** → `medium`  ·  _ambiguous, wide-span-link, synthesized_  
+  Header consistent, but shares an IP with applicant 25 over 346 days — carrier NAT is the innocent reading.
+- **49 Rosamund Tchaikovsky** → `medium`  ·  _ambiguous, conflicting, synthesized_  
+  A 27-year gap, which alone looks severe, but the file since is ordinary and nothing links it anywhere. Tests whether the gap dominates on its own.
+- **50 Kwabena Ferreira-Shaw** → `medium`  ·  _ambiguous, wide-span-link, synthesized_  
+  Header consistent, thin file, shares a device with a Ring D member over 224 days.

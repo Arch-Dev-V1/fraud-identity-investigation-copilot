@@ -96,7 +96,65 @@ EXPECTED: dict[int, tuple[str, tuple[str, ...], str]] = {
     25: ("medium", ("ambiguous", "wide-span-link", "synthesized"),
          "Header consistent, but shares an IP with two flagged applicants over wide "
          "spans — carrier NAT is the innocent reading."),
+    # --- second tranche, to give the effort sweep resolution ---
+    26: ("high", ("ring", "anchor", "synthesized"),
+         "Ring D anchor: header gap ~29y, AU boost, device+IP across 4 applicants in 8 days."),
+    27: ("high", ("ring", "synthesized"),
+         "Ring D: header gap ~26y, AU boost, device+IP+address with the ring."),
+    28: ("high", ("ring", "synthesized"),
+         "Ring D: header gap ~30y, AU boost, device+IP with the ring."),
+    29: ("high", ("ring", "synthesized"),
+         "Ring D: header gap ~25y, AU boost, IP+device with the ring."),
+    30: ("high", ("ring", "anchor", "synthesized"),
+         "Ring E: header gap ~27y, AU boost, email+address across a pair in 5 days."),
+    31: ("high", ("ring", "synthesized"),
+         "Ring E: header gap ~27y, AU boost, email+address across a pair in 5 days."),
+    32: ("high", ("lone-synthetic", "synthesized"),
+         "Header gap ~34y, AU boost, stacking to near-full utilization; only link is a "
+         "device shared over 282 days. No tight ring velocity."),
+    33: ("high", ("lone-synthetic", "synthesized"),
+         "Header gap ~31y, AU boost, rapid stacking, no links at all. The purest test of "
+         "whether the agent can reach high on the trajectory alone."),
+    34: ("low", ("legitimate", "synthesized"),
+         "Header back to 1969, consistent. Organic file, nothing shared."),
+    35: ("low", ("legitimate", "thin-file", "synthesized"),
+         "Header from enumeration at birth, two small accounts, low utilization."),
+    36: ("low", ("legitimate", "thin-file", "synthesized"),
+         "Header first observed two months after a parent's AU line — the ordinary shape of "
+         "a teenager's first record."),
+    37: ("low", ("legitimate", "synthesized"),
+         "Header back to 1999, consistent. Organic file with one cured 30-day late."),
+    38: ("low", ("legitimate", "adult-issuance", "synthesized"),
+         "Header gap with an explicit benign cause recorded, no AU, no links."),
+    39: ("low", ("legitimate", "adult-issuance", "synthesized"),
+         "Header gap with an explicit benign cause recorded, no AU, no links."),
+    40: ("low", ("legitimate", "first-party-abuse", "synthesized"),
+         "Third first-party case: header consistent back to 1987, recent stacking all current."),
+    41: ("low", ("legitimate", "thin-file", "synthesized"),
+         "Header consistent with the claimed DOB, small ordinary file, no links."),
+    42: ("medium", ("ambiguous", "short-gap", "synthesized"),
+         "Nine-year gap — too short for a built identity, too long to wave away. No links."),
+    43: ("medium", ("ambiguous", "wide-span-link", "synthesized"),
+         "Header consistent, but shares the Ring C address over 441 days. Same building is "
+         "the innocent reading."),
+    44: ("medium", ("ambiguous", "adult-issuance", "synthesized"),
+         "Benign cause recorded, but an AU boost and a shared phone over 531 days pull back."),
+    45: ("medium", ("ambiguous", "conflicting", "synthesized"),
+         "Header gap with no benign cause, no links, but a delinquency that was then cured."),
+    46: ("medium", ("ambiguous", "wide-span-link", "synthesized"),
+         "Header consistent, ordinary file, but shares a device with applicant 32 over 282 days."),
+    47: ("medium", ("ambiguous", "short-gap", "synthesized"),
+         "Thirteen-year gap with no benign cause either way, plus an AU boost."),
+    48: ("medium", ("ambiguous", "wide-span-link", "synthesized"),
+         "Header consistent, but shares an IP with applicant 25 over 346 days — carrier NAT "
+         "is the innocent reading."),
+    49: ("medium", ("ambiguous", "conflicting", "synthesized"),
+         "A 27-year gap, which alone looks severe, but the file since is ordinary and nothing "
+         "links it anywhere. Tests whether the gap dominates on its own."),
+    50: ("medium", ("ambiguous", "wide-span-link", "synthesized"),
+         "Header consistent, thin file, shares a device with a Ring D member over 224 days."),
 }
+
 
 CONFIDENCE_ORDER = ("low", "medium", "high")
 
