@@ -34,8 +34,13 @@ def main() -> int:
             print("  Something non-key-safe is in the value — usually a quote, a "
                   "space, or a newline picked up on paste.")
 
+    headers = loop.client_headers()
+    if headers:
+        print(f"Workspace id set: {headers['anthropic-workspace-id'][:12]}…")
+
+    client = anthropic.Anthropic(default_headers=headers) if headers else anthropic.Anthropic()
     try:
-        result = anthropic.Anthropic().messages.count_tokens(
+        result = client.messages.count_tokens(
             model=loop.MODEL,
             messages=[{"role": "user", "content": "ping"}],
         )
@@ -49,6 +54,18 @@ def main() -> int:
         return 1
     except anthropic.PermissionDeniedError as exc:
         print(f"\nVALID, BUT NO ACCESS to {loop.MODEL}.\n  {exc}")
+        return 1
+    except anthropic.BadRequestError as exc:
+        if "workspace" in str(exc).lower():
+            print("\nVALID KEY, BUT NOT SCOPED TO A WORKSPACE.")
+            print("  The key authenticates. It just does not say which workspace "
+                  "to bill and run in.")
+            print("\n  Either: create a key inside a workspace in the Console and "
+                  "use that one,")
+            print("  or:     set ANTHROPIC_WORKSPACE_ID in .env to the wrkspc_... "
+                  "id from the Console URL.")
+        else:
+            print(f"\nBad request: {exc}")
         return 1
     except anthropic.APIStatusError as exc:
         print(f"\nAPI error {exc.status_code}: {exc}")

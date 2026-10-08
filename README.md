@@ -311,9 +311,14 @@ python -m agent.check_credentials
 ```
 
 It calls the token-counting endpoint, which authenticates but runs no inference
-and is not billed. It distinguishes "no key resolved" from "a key was sent and
-the server refused it" — the second means the `.env` file is working and the key
-itself is revoked, rotated, or from a workspace that no longer exists.
+and is not billed. It separates the four cases that otherwise look alike:
+
+| What it says | What to do |
+| --- | --- |
+| No credentials resolved | Set `ANTHROPIC_API_KEY`, or put it in `.env` |
+| Rejected (401) | The file is working; the key is revoked or rotated. Get a current one |
+| Valid but not scoped to a workspace | Use a key created inside a workspace, or set `ANTHROPIC_WORKSPACE_ID` |
+| Valid but no access to the model (403) | The key is fine; the workspace lacks access |
 
 ## Restart after editing `agent/`
 

@@ -215,6 +215,15 @@ _NO_CREDENTIALS = (
     "start the investigation again."
 )
 
+# An organisation-level key is valid but unusable without naming a workspace.
+_NEEDS_WORKSPACE = (
+    "This API key is not scoped to a workspace, so the request has to name one. "
+    "Two fixes, either is fine: create a key inside a workspace in the Anthropic "
+    "Console and use that instead, or set ANTHROPIC_WORKSPACE_ID (in .env or the "
+    "environment) to the workspace id — it is the `wrkspc_...` value in the "
+    "Console URL when you have that workspace open."
+)
+
 # A rejected key is a different problem from a missing one, and conflating them
 # sends people to edit a file that is already correct. This message is for the
 # case where a key WAS found and sent, and the API refused it.
@@ -227,12 +236,25 @@ _KEY_REJECTED = (
 )
 
 
+def client_headers() -> dict[str, str]:
+    """Extra headers the client needs, if any.
+
+    An API key created at organisation level rather than inside a workspace is
+    accepted by the API but cannot be used on its own: the request has to name
+    the workspace. Setting ANTHROPIC_WORKSPACE_ID makes such a key usable. A
+    workspace-scoped key needs none of this and ignores it.
+    """
+    workspace = os.environ.get("ANTHROPIC_WORKSPACE_ID", "").strip()
+    return {"anthropic-workspace-id": workspace} if workspace else {}
+
+
 def _client() -> anthropic.Anthropic:
     # Deliberately no credential preflight here: the SDK also resolves an
     # `ant auth login` profile and federated env vars, so an unset
     # ANTHROPIC_API_KEY does not mean there is no credential. A genuinely
     # missing one surfaces as an error event from the loop below.
-    return anthropic.Anthropic()
+    headers = client_headers()
+    return anthropic.Anthropic(default_headers=headers) if headers else anthropic.Anthropic()
 
 
 def run_investigation(
@@ -357,6 +379,12 @@ def _investigate(
             )
         except anthropic.AuthenticationError:
             yield {"type": "error", "message": _KEY_REJECTED}
+            return
+        except anthropic.BadRequestError as exc:
+            if "workspace" in str(exc).lower():
+                yield {"type": "error", "message": _NEEDS_WORKSPACE}
+            else:
+                yield {"type": "error", "message": f"Bad request: {exc}"}
             return
         except anthropic.PermissionDeniedError as exc:
             yield {
