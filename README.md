@@ -302,6 +302,19 @@ mistype it into someone else's file, and it keeps personal data out of
 └── tests/test_loop.py        # offline: loop, demo mode, MCP transport
 ```
 
+## When a run says the credentials are wrong
+
+Two different failures, and the messages now say which:
+
+```bash
+python -m agent.check_credentials
+```
+
+It calls the token-counting endpoint, which authenticates but runs no inference
+and is not billed. It distinguishes "no key resolved" from "a key was sent and
+the server refused it" — the second means the `.env` file is working and the key
+itself is revoked, rotated, or from a workspace that no longer exists.
+
 ## Restart after editing `agent/`
 
 Streamlit re-runs `app.py` when it changes, but it does not reload local modules

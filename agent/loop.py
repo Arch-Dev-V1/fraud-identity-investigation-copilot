@@ -210,8 +210,20 @@ def memo_to_markdown(memo: dict, case: dict) -> str:
 
 
 _NO_CREDENTIALS = (
-    "No Anthropic credentials found. Set ANTHROPIC_API_KEY in your environment "
-    "(or run `ant auth login`), then start the investigation again."
+    "No Anthropic credentials found. Set ANTHROPIC_API_KEY in your environment, "
+    "put it in a .env file in the project root, or run `ant auth login` — then "
+    "start the investigation again."
+)
+
+# A rejected key is a different problem from a missing one, and conflating them
+# sends people to edit a file that is already correct. This message is for the
+# case where a key WAS found and sent, and the API refused it.
+_KEY_REJECTED = (
+    "The API rejected the credentials. A key was found and sent, so the file or "
+    "environment variable holding it is working — the key itself is the problem. "
+    "It has most likely been revoked or rotated, or belongs to a workspace that "
+    "no longer exists. Check it in the Anthropic Console and paste the current "
+    "one. Run `python -m agent.check_credentials` to confirm before trying again."
 )
 
 
@@ -344,7 +356,14 @@ def _investigate(
                 fallbacks="default",
             )
         except anthropic.AuthenticationError:
-            yield {"type": "error", "message": _NO_CREDENTIALS}
+            yield {"type": "error", "message": _KEY_REJECTED}
+            return
+        except anthropic.PermissionDeniedError as exc:
+            yield {
+                "type": "error",
+                "message": ("The credentials are valid but lack access to this "
+                            f"model or workspace: {exc}"),
+            }
             return
         except anthropic.APIStatusError as exc:
             yield {"type": "error", "message": f"API error {exc.status_code}: {exc}"}
